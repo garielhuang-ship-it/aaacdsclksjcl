@@ -3,7 +3,7 @@ import { aiProcedure, createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
 import { practiceRecords } from "../../db/schema";
 import { eq } from "drizzle-orm";
-import { evaluateImpromptu, evaluateReading, evaluateSpeaking } from "../lib/deepseek";
+import { evaluateReading, evaluateSpeaking } from "../lib/deepseek";
 
 // 保存练习记录；保存失败不影响把评分结果返回给用户
 async function saveRecord(record: typeof practiceRecords.$inferInsert) {
@@ -111,7 +111,7 @@ export const evaluationRouter = createRouter({
 
       // 调用 DeepSeek 进行 AI 评价；失败时直接把错误返回给前端，不使用写死的分数
       const wordDiff = diffWords(input.passage, input.transcript);
-      const aiResult = await evaluateReading(input.passage, input.transcript, contentScore, wordDiff);
+      const aiResult = await evaluateReading(input.passage, input.transcript, contentScore, wordDiff, input.duration);
 
       const sessionId = crypto.randomUUID();
       await saveRecord({
@@ -124,6 +124,9 @@ export const evaluationRouter = createRouter({
         totalScore: aiResult.totalScore,
         fluencyScore: aiResult.fluencyScore,
         aiFeedback: {
+          pronunciationScore: aiResult.pronunciationScore,
+          paceScore: aiResult.paceScore,
+          completenessScore: aiResult.completenessScore,
           feedback: aiResult.feedback,
           suggestions: aiResult.suggestions,
           highlights: aiResult.highlights,
@@ -152,7 +155,7 @@ export const evaluationRouter = createRouter({
       })
     )
     .mutation(async ({ input }) => {
-      const aiResult = await evaluateSpeaking(input.question, input.transcript);
+      const aiResult = await evaluateSpeaking(input.question, input.transcript, input.duration);
 
       const sessionId = crypto.randomUUID();
       await saveRecord({
@@ -166,6 +169,7 @@ export const evaluationRouter = createRouter({
         fluencyScore: aiResult.fluencyScore,
         totalScore: aiResult.totalScore,
         aiFeedback: {
+          bonusScore: aiResult.bonusScore,
           feedback: aiResult.feedback,
           suggestions: aiResult.suggestions,
           grammarIssues: aiResult.grammarIssues,
@@ -180,7 +184,7 @@ export const evaluationRouter = createRouter({
       };
     }),
 
-  // 即兴提问训练：五维度评分
+  // 即兴问答训练：同样使用【问答评分50】
   evaluateAnswer: aiProcedure
     .input(
       z.object({
@@ -190,7 +194,7 @@ export const evaluationRouter = createRouter({
       })
     )
     .mutation(async ({ input }) => {
-      const aiResult = await evaluateImpromptu(input.question, input.transcript);
+      const aiResult = await evaluateSpeaking(input.question, input.transcript, input.duration);
 
       const sessionId = crypto.randomUUID();
       await saveRecord({
@@ -199,9 +203,9 @@ export const evaluationRouter = createRouter({
         questionText: input.question,
         transcript: input.transcript,
         audioDuration: input.duration,
-        contentScore: aiResult.relevanceScore,
-        thinkingScore: aiResult.logicScore,
-        fluencyScore: aiResult.naturalnessScore,
+        contentScore: aiResult.understandingScore,
+        thinkingScore: aiResult.thinkingScore,
+        fluencyScore: aiResult.fluencyScore,
         totalScore: aiResult.totalScore,
         aiFeedback: aiResult,
       });

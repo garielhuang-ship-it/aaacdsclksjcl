@@ -354,6 +354,10 @@ export default function FullSimulation() {
                 <div className="bg-crimson-500 h-2 rounded-full transition-all duration-300" style={{ width: `${readingRecordTimer.progress}%` }} />
               </div>
             </div>
+            <div className="riell-card p-8">
+              <h3 className="text-xl font-bold text-navy-500 font-display mb-4">{passageTitle}</h3>
+              <div className="text-lg leading-relaxed text-navy-600">{passage}</div>
+            </div>
             <div className="riell-card p-6">
               <h3 className="text-sm font-medium text-muted-foreground mb-3">实时转写</h3>
               <div className="min-h-[80px] p-4 bg-navy-50/50 rounded-lg text-navy-600">
@@ -389,19 +393,19 @@ export default function FullSimulation() {
                     <CheckCircle2 className="w-6 h-6 text-green-500" />
                     <h2 className="text-xl font-bold text-navy-500 font-display">朗读环节完成</h2>
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="text-center p-4 bg-navy-50 rounded-lg">
-                      <div className="text-3xl font-bold text-navy-500 font-mono">{readingResult.totalScore ?? "—"}</div>
-                      <div className="text-xs text-muted-foreground mt-1">总分 / 50</div>
-                    </div>
-                    <div className="text-center p-4 bg-navy-50 rounded-lg">
-                      <div className="text-3xl font-bold text-navy-500 font-mono">{readingResult.contentScore ?? "—"}</div>
-                      <div className="text-xs text-muted-foreground mt-1">内容完整度</div>
-                    </div>
-                    <div className="text-center p-4 bg-navy-50 rounded-lg">
-                      <div className="text-3xl font-bold text-navy-500 font-mono">{readingResult.fluencyScore ?? "—"}</div>
-                      <div className="text-xs text-muted-foreground mt-1">流畅度</div>
-                    </div>
+                  <div className="grid grid-cols-5 gap-4">
+                    {[
+                      ["总分", readingResult.totalScore, 50],
+                      ["语音语调", readingResult.pronunciationScore, 20],
+                      ["语速", readingResult.paceScore, 10],
+                      ["流畅度", readingResult.fluencyScore, 15],
+                      ["完整度", readingResult.completenessScore, 5],
+                    ].map(([label, value, max]) => (
+                      <div key={label} className="text-center p-4 bg-navy-50 rounded-lg">
+                        <div className="text-3xl font-bold text-navy-500 font-mono">{value ?? "—"}</div>
+                        <div className="text-xs text-muted-foreground mt-1">{label} / {max}</div>
+                      </div>
+                    ))}
                   </div>
                 </div>
                 <button onClick={proceedToSpeaking} className="riell-btn-primary w-full text-lg py-4">
@@ -484,7 +488,7 @@ export default function FullSimulation() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-white/10 rounded-lg p-4">
                   <div className="text-3xl font-bold text-gold-400 font-mono">
-                    {((readingResult?.totalScore || 0) + (speakingResult?.totalScore || 0))}
+                    {Math.min(100, (readingResult?.totalScore || 0) + (speakingResult?.totalScore || 0))}
                   </div>
                   <div className="text-sm text-blue-100/80 mt-1">总分 / 100</div>
                 </div>
@@ -498,7 +502,7 @@ export default function FullSimulation() {
                 </div>
                 <div className="bg-white/10 rounded-lg p-4">
                   <div className="text-3xl font-bold text-gold-400 font-mono">
-                    {Math.round(((readingResult?.totalScore || 0) + (speakingResult?.totalScore || 0)))}
+                    {Math.min(100, Math.round((readingResult?.totalScore || 0) + (speakingResult?.totalScore || 0)))}
                   </div>
                   <div className="text-sm text-blue-100/80 mt-1">综合得分</div>
                 </div>
@@ -512,19 +516,19 @@ export default function FullSimulation() {
                   <BookOpen className="w-5 h-5 text-navy-400" />
                   朗读环节详情
                 </h3>
-                <div className="grid grid-cols-3 gap-3 mb-4">
-                  <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{readingResult.contentScore ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">内容完整度</div>
-                  </div>
-                  <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{readingResult.fluencyScore ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">流畅度</div>
-                  </div>
-                  <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{readingResult.totalScore ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">总分</div>
-                  </div>
+                <div className="grid grid-cols-5 gap-3 mb-4">
+                  {[
+                    ["总分", readingResult.totalScore, 50],
+                    ["语音语调", readingResult.pronunciationScore, 20],
+                    ["语速", readingResult.paceScore, 10],
+                    ["流畅度", readingResult.fluencyScore, 15],
+                    ["完整度", readingResult.completenessScore, 5],
+                  ].map(([label, value, max]) => (
+                    <div key={label} className="text-center p-3 bg-navy-50 rounded-lg">
+                      <div className="text-xl font-bold text-navy-500">{value ?? "—"}</div>
+                      <div className="text-xs text-muted-foreground">{label} / {max}</div>
+                    </div>
+                  ))}
                 </div>
                 <p className="text-sm text-navy-600 mb-3">{readingResult.feedback}</p>
                 {readingResult.suggestions?.length > 0 && (
@@ -546,7 +550,7 @@ export default function FullSimulation() {
                   <MessageCircle className="w-5 h-5 text-navy-400" />
                   问答环节详情
                 </h3>
-                <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className="grid grid-cols-5 gap-3 mb-4">
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
                     <div className="text-xl font-bold text-navy-500">{speakingResult.understandingScore ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">理解能力 / 20</div>
@@ -558,6 +562,10 @@ export default function FullSimulation() {
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
                     <div className="text-xl font-bold text-navy-500">{speakingResult.fluencyScore ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">语音语调 / 10</div>
+                  </div>
+                  <div className="text-center p-3 bg-navy-50 rounded-lg">
+                    <div className="text-xl font-bold text-navy-500">{speakingResult.bonusScore ?? "—"}</div>
+                    <div className="text-xs text-muted-foreground">升华加分 / 5</div>
                   </div>
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
                     <div className="text-xl font-bold text-navy-500">{speakingResult.totalScore ?? "—"}</div>

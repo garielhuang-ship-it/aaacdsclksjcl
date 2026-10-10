@@ -398,18 +398,17 @@ export default function SpeakingPractice() {
                 <div className="riell-card-gradient p-8 text-center">
                   <h2 className="text-2xl font-bold mb-6 font-display">问答评价结果</h2>
                   <div className="text-5xl font-bold text-gold-400 font-mono">{evaluationResult.totalScore}</div>
-                  <div className="text-sm text-blue-100/80 mt-1 mb-6">综合得分 / 100</div>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                  <div className="text-sm text-blue-100/80 mt-1 mb-6">总分 / 50（升华加分另计，最高 +5）</div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                     {[
-                      ["内容切题", evaluationResult.relevanceScore],
-                      ["逻辑与完整性", evaluationResult.logicScore],
-                      ["语法准确度", evaluationResult.grammarScore],
-                      ["词汇丰富度", evaluationResult.vocabularyScore],
-                      ["表达自然度", evaluationResult.naturalnessScore],
-                    ].map(([label, value]) => (
+                      ["理解能力", evaluationResult.understandingScore, 20],
+                      ["思辨能力", evaluationResult.thinkingScore, 20],
+                      ["语音语调", evaluationResult.fluencyScore, 10],
+                      ["升华加分", evaluationResult.bonusScore, 5],
+                    ].map(([label, value, max]) => (
                       <div key={label} className="text-center">
                         <div className="text-3xl font-bold text-gold-400 font-mono">{value}</div>
-                        <div className="text-sm text-blue-100/80 mt-1">{label} / 20</div>
+                        <div className="text-sm text-blue-100/80 mt-1">{label} / {max}</div>
                       </div>
                     ))}
                   </div>
@@ -435,20 +434,20 @@ export default function SpeakingPractice() {
                   </div>
                 )}
 
-                {evaluationResult.improvements?.length > 0 && (
+                {evaluationResult.grammarIssues?.length > 0 && (
                   <div className="riell-card p-6">
                     <h3 className="font-semibold text-navy-500 mb-3 flex items-center gap-2">
                       <Ear className="w-5 h-5 text-gold-500" />
                       待改进
                     </h3>
                     <div className="space-y-3">
-                      {evaluationResult.improvements.map((item: { quote: string; problem: string; suggestion: string }, i: number) => (
+                      {evaluationResult.grammarIssues.map((item: { issue: string; correction: string; explanation?: string }, i: number) => (
                         <div key={i} className="flex items-start gap-3 p-3 bg-crimson-50 rounded-lg">
                           <span className="w-5 h-5 bg-crimson-100 rounded-full flex items-center justify-center text-xs text-crimson-600 font-bold shrink-0">!</span>
                           <div>
-                            <p className="text-sm text-crimson-700">“{item.quote}”</p>
-                            <p className="text-xs text-muted-foreground mt-1">{item.problem}</p>
-                            <p className="text-sm text-green-700 mt-1">→ {item.suggestion}</p>
+                            <p className="text-sm text-crimson-700">“{item.issue}”</p>
+                            <p className="text-xs text-muted-foreground mt-1">{item.explanation}</p>
+                            <p className="text-sm text-green-700 mt-1">→ {item.correction}</p>
                           </div>
                         </div>
                       ))}
