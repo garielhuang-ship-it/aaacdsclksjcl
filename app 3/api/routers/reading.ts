@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { readingPassages } from "@db/schema";
+import { readingPassages } from "../../db/schema";
 import { eq } from "drizzle-orm";
 
 export const readingRouter = createRouter({
@@ -37,7 +37,7 @@ export const readingRouter = createRouter({
 
   // 按分类获取文章列表
   getByCategory: publicQuery
-    .input(z.object({ category: z.string() }))
+    .input(z.object({ category: z.string().max(100) }))
     .query(async ({ input }) => {
       const db = getDb();
       return db

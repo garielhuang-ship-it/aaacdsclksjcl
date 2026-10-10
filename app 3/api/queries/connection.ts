@@ -1,18 +1,13 @@
-import { drizzle } from "drizzle-orm/mysql2";
-import { env } from "../lib/env";
-import * as schema from "@db/schema";
-import * as relations from "@db/relations";
+import { drizzle } from "drizzle-orm/netlify-db";
+import * as schema from "../../db/schema";
 
-const fullSchema = { ...schema, ...relations };
+let instance: ReturnType<typeof createDb> | undefined;
 
-let instance: ReturnType<typeof drizzle<typeof fullSchema>>;
+function createDb() {
+  return drizzle({ schema });
+}
 
 export function getDb() {
-  if (!instance) {
-    instance = drizzle(env.databaseUrl, {
-      mode: "planetscale",
-      schema: fullSchema,
-    });
-  }
+  instance ??= createDb();
   return instance;
 }

@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { createRouter, publicQuery } from "../middleware";
+import { aiProcedure, createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { speakingTopics } from "@db/schema";
+import { speakingTopics } from "../../db/schema";
 import { eq } from "drizzle-orm";
 import { generateSpeakingQuestion } from "../lib/deepseek";
 
@@ -16,7 +16,7 @@ export const speakingRouter = createRouter({
 
   // 按分类获取口语题
   getByCategory: publicQuery
-    .input(z.object({ category: z.string() }))
+    .input(z.object({ category: z.string().max(100) }))
     .query(async ({ input }) => {
       const db = getDb();
       return db
@@ -36,11 +36,11 @@ export const speakingRouter = createRouter({
   }),
 
   // AI生成新题目
-  generate: publicQuery
+  generate: aiProcedure
     .input(
       z.object({
-        category: z.string().optional(),
-        difficulty: z.string().optional(),
+        category: z.string().trim().max(50).optional(),
+        difficulty: z.enum(["easy", "medium", "hard"]).optional(),
       }).optional()
     )
     .query(async ({ input }) => {
@@ -54,18 +54,23 @@ export const speakingRouter = createRouter({
           question,
         };
       } catch (error) {
-        console.error("Generate question failed:", error);
-        // 降级：从题库随机返回
-        const db = getDb();
-        const topics = await db.select().from(speakingTopics);
-        const randomIndex = Math.floor(Math.random() * topics.length);
-        const topic = topics[randomIndex];
+        console.error("Generate question failed:", error instanceof Error ? error.message : error);
+        // 降级：从题库随机返回一道真实题目，并告知前端 AI 出题失败
+        let topic: typeof speakingTopics.$inferSelect | undefined;
+        try {
+          const topics = await getDb().select().from(speakingTopics);
+          topic = topics[Math.floor(Math.random() * topics.length)];
+        } catch (dbError) {
+          console.error("Question bank fallback failed:", dbError instanceof Error ? dbError.message : dbError);
+        }
+        // 题库也取不到时，把 AI 出题失败的真实原因告诉用户
+        if (!topic) throw error;
         return {
           success: false,
           question: {
-            question: topic?.question || "What do you think is the key to success?",
-            category: topic?.category || "综合思辨类",
-            tips: ["Think about your personal experience", "Provide specific examples"],
+            question: topic.question,
+            category: topic.category,
+            tips: [] as string[],
           },
           error: error instanceof Error ? error.message : "Unknown error",
         };

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
-import { trpc } from "@/providers/trpc";
+import { trpc, getErrorMessage } from "@/providers/trpc";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useTimer, formatTime } from "@/hooks/useTimer";
 import {
@@ -15,7 +15,11 @@ import {
   Lightbulb,
   Brain,
   Ear,
+  PenLine,
 } from "lucide-react";
+
+const MAX_TRANSCRIPT_LENGTH = 3000;
+const MAX_RECORD_SECONDS = 180;
 
 type Phase = "loading" | "ready" | "preparing" | "recording" | "evaluating";
 
@@ -26,6 +30,8 @@ export default function SpeakingPractice() {
   const [category, setCategory] = useState("");
   const [tips, setTips] = useState<string[]>([]);
   const [evaluationResult, setEvaluationResult] = useState<any>(null);
+  const [evaluationError, setEvaluationError] = useState<string | null>(null);
+  const [submittedTranscript, setSubmittedTranscript] = useState("");
 
   const {
     transcript,
@@ -35,13 +41,20 @@ export default function SpeakingPractice() {
     startListening,
     stopListening,
     resetTranscript,
+    getTranscript,
   } = useSpeechRecognition();
 
   const prepTimer = useTimer(30);
-  const recordTimer = useTimer(90);
+  const recordTimer = useTimer(MAX_RECORD_SECONDS);
 
-  const { data: generatedData, isLoading, refetch } = trpc.speaking.generate.useQuery();
-  const evaluateMutation = trpc.evaluation.evaluateSpeaking.useMutation();
+  const {
+    data: generatedData,
+    isLoading,
+    isError: isGenerateError,
+    error: generateError,
+    refetch,
+  } = trpc.speaking.generate.useQuery(undefined, { staleTime: Infinity });
+  const evaluateMutation = trpc.evaluation.evaluateAnswer.useMutation();
 
   useEffect(() => {
     if (generatedData && !isLoading) {
@@ -64,19 +77,40 @@ export default function SpeakingPractice() {
     }
   }, [recordTimer.isExpired, phase]);
 
-  const handleStartPreparing = () => {
-    setPhase("preparing");
-    prepTimer.reset(30);
-    setTimeout(() => prepTimer.start(), 100);
-  };
 
   const handleStartRecording = () => {
     prepTimer.pause();
     resetTranscript();
     setPhase("recording");
-    recordTimer.reset(90);
+    recordTimer.reset(MAX_RECORD_SECONDS);
     startListening();
     setTimeout(() => recordTimer.start(), 100);
+  };
+
+  const submitEvaluation = async (answer: string, duration?: number) => {
+    setEvaluationResult(null);
+    setEvaluationError(null);
+
+    // 输入校验
+    if (!answer) {
+      setEvaluationError("未检测到语音输入。请检查浏览器麦克风权限，并在安静环境中靠近麦克风回答。");
+      return;
+    }
+    if (!/[a-zA-Z]{2,}/.test(answer)) {
+      setEvaluationError("没有识别到英文内容，请用英文回答。");
+      return;
+    }
+    if (answer.length > MAX_TRANSCRIPT_LENGTH) {
+      setEvaluationError(`回答内容过长（最多 ${MAX_TRANSCRIPT_LENGTH} 个字符），请精简后重新回答。`);
+      return;
+    }
+
+    try {
+      const result = await evaluateMutation.mutateAsync({ question, transcript: answer, duration });
+      setEvaluationResult(result);
+    } catch (err) {
+      setEvaluationError(getErrorMessage(err));
+    }
   };
 
   const handleStopRecording = useCallback(() => {
@@ -84,55 +118,25 @@ export default function SpeakingPractice() {
     recordTimer.pause();
     setPhase("evaluating");
 
-    setTimeout(async () => {
-      const fullTranscript = transcript + (interimTranscript ? " " + interimTranscript : "");
-      if (!fullTranscript.trim()) {
-        setEvaluationResult({
-          success: true,
-          understandingScore: 0,
-          thinkingScore: 0,
-          fluencyScore: 0,
-          totalScore: 0,
-          feedback: "未检测到语音输入。请确保麦克风正常工作，并在安静环境中回答。",
-          suggestions: ["检查浏览器麦克风权限", "使用 Chrome 或 Edge 浏览器", "回答时尽量靠近麦克风"],
-          grammarIssues: [],
-        });
-        return;
-      }
-
-      try {
-        const result = await evaluateMutation.mutateAsync({
-          question,
-          transcript: fullTranscript,
-          duration: 90 - recordTimer.timeLeft,
-        });
-        setEvaluationResult(result);
-      } catch (err) {
-        console.error("Evaluation error:", err);
-        setEvaluationResult({
-          success: true,
-          understandingScore: 0,
-          thinkingScore: 0,
-          fluencyScore: 0,
-          totalScore: 0,
-          feedback: "评价服务暂时不可用，请稍后重试。",
-          suggestions: ["检查网络连接", "稍后重新提交"],
-          grammarIssues: [],
-        });
-      }
+    setTimeout(() => {
+      const fullTranscript = getTranscript();
+      setSubmittedTranscript(fullTranscript);
+      submitEvaluation(fullTranscript, MAX_RECORD_SECONDS - recordTimer.timeLeft);
     }, 500);
-  }, [stopListening, transcript, interimTranscript, question, evaluateMutation, recordTimer]);
+  }, [stopListening, getTranscript, question, evaluateMutation, recordTimer]);
 
   const handleRetry = () => {
     resetTranscript();
     setEvaluationResult(null);
+    setEvaluationError(null);
     setPhase("ready");
     prepTimer.reset(30);
-    recordTimer.reset(90);
+    recordTimer.reset(MAX_RECORD_SECONDS);
   };
 
   const handleNewQuestion = async () => {
     setEvaluationResult(null);
+    setEvaluationError(null);
     setPhase("loading");
     resetTranscript();
     await refetch();
@@ -178,22 +182,40 @@ export default function SpeakingPractice() {
           {phase === "recording" && (
             <div className="flex items-center gap-2 text-crimson-500 bg-crimson-50 px-3 py-1.5 rounded-lg">
               <div className="w-2 h-2 bg-crimson-500 rounded-full recording-pulse" />
-              <span className="font-mono font-bold">{formatTime(recordTimer.timeLeft)}</span>
+              <span className="font-mono font-bold">{formatTime(MAX_RECORD_SECONDS - recordTimer.timeLeft)}</span>
             </div>
           )}
         </div>
       </header>
 
       <main className="max-w-4xl mx-auto px-6 py-8">
-        {phase === "loading" && (
+        {phase === "loading" && !isGenerateError && (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-8 h-8 text-navy-500 animate-spin" />
             <span className="ml-3 text-navy-500">AI 生成题目中...</span>
           </div>
         )}
 
+        {phase === "loading" && isGenerateError && (
+          <div className="riell-card p-8 text-center">
+            <AlertCircle className="w-10 h-10 text-crimson-500 mx-auto mb-4" />
+            <h2 className="text-xl font-bold text-navy-500 mb-2">题目加载失败</h2>
+            <p className="text-muted-foreground mb-6">{getErrorMessage(generateError)}</p>
+            <button onClick={handleNewQuestion} className="riell-btn-primary">
+              <RotateCcw className="w-4 h-4" />
+              重试
+            </button>
+          </div>
+        )}
+
         {phase === "ready" && (
           <div className="space-y-6">
+            {generatedData && !generatedData.success && (
+              <div className="flex items-start gap-2 p-4 bg-gold-50 rounded-lg text-sm text-gold-800">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>AI 出题暂时不可用，已从题库中抽取一道题目。{generatedData.error ? `（原因：${generatedData.error}）` : ""}</span>
+              </div>
+            )}
             <div className="riell-card p-8">
               <div className="flex items-center gap-2 mb-4">
                 <span className="riell-badge">{category || "即兴问答"}</span>
@@ -224,28 +246,28 @@ export default function SpeakingPractice() {
             <div className="riell-card p-6">
               <h3 className="font-semibold text-navy-500 mb-3 flex items-center gap-2">
                 <Brain className="w-5 h-5 text-gold-500" />
-                比赛规则
+                答题说明
               </h3>
               <ul className="space-y-2 text-sm text-muted-foreground">
                 <li className="flex items-start gap-2">
                   <span className="w-5 h-5 bg-navy-100 rounded-full flex items-center justify-center text-xs text-navy-500 font-bold shrink-0 mt-0.5">1</span>
-                  点击开始后，你将有 30 秒时间准备回答思路
+                  阅读题目，想好思路后点击“开始回答”，系统立即开始录音
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="w-5 h-5 bg-navy-100 rounded-full flex items-center justify-center text-xs text-navy-500 font-bold shrink-0 mt-0.5">2</span>
-                  准备时间结束后，系统将自动开始录音，请在 1.5 分钟内完成回答
+                  用英文作答，页面会实时显示语音识别文本；说完点击“结束回答”（最长 3 分钟）
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="w-5 h-5 bg-navy-100 rounded-full flex items-center justify-center text-xs text-navy-500 font-bold shrink-0 mt-0.5">3</span>
-                  回答结束后，AI 将从理解能力、思辨能力、语音语调三个维度给出评价
+                  AI 将从内容切题、逻辑完整、语法、词汇、表达自然度五个维度评分，并给出参考答案
                 </li>
               </ul>
             </div>
 
             <div className="flex gap-4">
-              <button onClick={handleStartPreparing} className="riell-btn-primary flex-1 text-lg py-4">
+              <button onClick={handleStartRecording} className="riell-btn-primary flex-1 text-lg py-4">
                 <Mic className="w-5 h-5" />
-                开始准备
+                开始回答
               </button>
               <button onClick={handleNewQuestion} className="riell-btn-outline">
                 <RotateCcw className="w-4 h-4" />
@@ -301,8 +323,9 @@ export default function SpeakingPractice() {
                 <h2 className="text-2xl font-bold text-crimson-500 font-display">正在录音</h2>
               </div>
               <div className="text-6xl font-bold font-mono text-navy-500 mb-6">
-                {formatTime(recordTimer.timeLeft)}
+                {formatTime(MAX_RECORD_SECONDS - recordTimer.timeLeft)}
               </div>
+              <p className="text-sm text-muted-foreground -mt-4 mb-6">已录音时长 · 最长 {MAX_RECORD_SECONDS / 60} 分钟，到时自动结束</p>
               <div className="w-full bg-navy-100 rounded-full h-2">
                 <div
                   className="bg-crimson-500 h-2 rounded-full transition-all duration-300"
@@ -344,7 +367,27 @@ export default function SpeakingPractice() {
 
         {phase === "evaluating" && (
           <div className="space-y-6">
-            {!evaluationResult ? (
+            {evaluationError ? (
+              <div className="riell-card p-8 text-center">
+                <AlertCircle className="w-10 h-10 text-crimson-500 mx-auto mb-4" />
+                <h2 className="text-xl font-bold text-navy-500 mb-2">评价未完成</h2>
+                <p className="text-muted-foreground mb-6">{evaluationError}</p>
+                <div className="flex gap-4 justify-center">
+                  <button onClick={handleRetry} className="riell-btn-outline">
+                    <RotateCcw className="w-4 h-4" />
+                    重新回答
+                  </button>
+                  {submittedTranscript && /[a-zA-Z]{2,}/.test(submittedTranscript) && submittedTranscript.length <= MAX_TRANSCRIPT_LENGTH && (
+                    <button
+                      onClick={() => submitEvaluation(submittedTranscript, MAX_RECORD_SECONDS - recordTimer.timeLeft)}
+                      className="riell-btn-primary"
+                    >
+                      重新提交评价
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : !evaluationResult ? (
               <div className="riell-card p-12 text-center">
                 <Loader2 className="w-10 h-10 text-navy-500 animate-spin mx-auto mb-4" />
                 <h2 className="text-xl font-bold text-navy-500 mb-2">AI 评价中</h2>
@@ -354,54 +397,74 @@ export default function SpeakingPractice() {
               <>
                 <div className="riell-card-gradient p-8 text-center">
                   <h2 className="text-2xl font-bold mb-6 font-display">问答评价结果</h2>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                    <div className="text-center">
-                      <div className="text-4xl font-bold text-gold-400 font-mono">
-                        {evaluationResult.totalScore}
+                  <div className="text-5xl font-bold text-gold-400 font-mono">{evaluationResult.totalScore}</div>
+                  <div className="text-sm text-blue-100/80 mt-1 mb-6">综合得分 / 100</div>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                    {[
+                      ["内容切题", evaluationResult.relevanceScore],
+                      ["逻辑与完整性", evaluationResult.logicScore],
+                      ["语法准确度", evaluationResult.grammarScore],
+                      ["词汇丰富度", evaluationResult.vocabularyScore],
+                      ["表达自然度", evaluationResult.naturalnessScore],
+                    ].map(([label, value]) => (
+                      <div key={label} className="text-center">
+                        <div className="text-3xl font-bold text-gold-400 font-mono">{value}</div>
+                        <div className="text-sm text-blue-100/80 mt-1">{label} / 20</div>
                       </div>
-                      <div className="text-sm text-blue-100/80 mt-1">总分 / 50</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-4xl font-bold text-gold-400 font-mono">
-                        {evaluationResult.understandingScore}
-                      </div>
-                      <div className="text-sm text-blue-100/80 mt-1">理解能力 / 20</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-4xl font-bold text-gold-400 font-mono">
-                        {evaluationResult.thinkingScore}
-                      </div>
-                      <div className="text-sm text-blue-100/80 mt-1">思辨能力 / 20</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-4xl font-bold text-gold-400 font-mono">
-                        {evaluationResult.fluencyScore}
-                      </div>
-                      <div className="text-sm text-blue-100/80 mt-1">语音语调 / 10</div>
-                    </div>
+                    ))}
                   </div>
                   <p className="text-blue-100/90 leading-relaxed max-w-xl mx-auto">
                     {evaluationResult.feedback}
                   </p>
                 </div>
 
-                {evaluationResult.grammarIssues?.length > 0 && (
+                {evaluationResult.strengths?.length > 0 && (
+                  <div className="riell-card p-6">
+                    <h3 className="font-semibold text-navy-500 mb-3 flex items-center gap-2">
+                      <Brain className="w-5 h-5 text-gold-500" />
+                      优点
+                    </h3>
+                    <ul className="space-y-2">
+                      {evaluationResult.strengths.map((t: string, i: number) => (
+                        <li key={i} className="flex items-start gap-2 text-sm text-navy-600">
+                          <span className="w-5 h-5 bg-green-100 rounded-full flex items-center justify-center text-xs text-green-700 font-bold shrink-0">✓</span>
+                          {t}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {evaluationResult.improvements?.length > 0 && (
                   <div className="riell-card p-6">
                     <h3 className="font-semibold text-navy-500 mb-3 flex items-center gap-2">
                       <Ear className="w-5 h-5 text-gold-500" />
-                      语法问题与纠正
+                      待改进
                     </h3>
                     <div className="space-y-3">
-                      {evaluationResult.grammarIssues.map((issue: any, i: number) => (
+                      {evaluationResult.improvements.map((item: { quote: string; problem: string; suggestion: string }, i: number) => (
                         <div key={i} className="flex items-start gap-3 p-3 bg-crimson-50 rounded-lg">
                           <span className="w-5 h-5 bg-crimson-100 rounded-full flex items-center justify-center text-xs text-crimson-600 font-bold shrink-0">!</span>
                           <div>
-                            <p className="text-sm text-crimson-700">{issue.issue}</p>
-                            <p className="text-sm text-green-700 mt-1">→ {issue.correction}</p>
+                            <p className="text-sm text-crimson-700">“{item.quote}”</p>
+                            <p className="text-xs text-muted-foreground mt-1">{item.problem}</p>
+                            <p className="text-sm text-green-700 mt-1">→ {item.suggestion}</p>
                           </div>
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {evaluationResult.revisedAnswer && (
+                  <div className="riell-card p-6">
+                    <h3 className="font-semibold text-navy-500 mb-3 flex items-center gap-2">
+                      <PenLine className="w-5 h-5 text-gold-500" />
+                      修改后的参考答案
+                    </h3>
+                    <p className="p-4 bg-green-50 rounded-lg text-sm text-navy-600 leading-relaxed whitespace-pre-line">
+                      {evaluationResult.revisedAnswer}
+                    </p>
                   </div>
                 )}
 
@@ -425,9 +488,9 @@ export default function SpeakingPractice() {
                 <div className="riell-card p-6">
                   <h3 className="font-semibold text-navy-500 mb-3">题目</h3>
                   <p className="text-navy-600 mb-4 font-medium">{question}</p>
-                  <h3 className="font-semibold text-navy-500 mb-3">你的回答转写</h3>
+                  <h3 className="font-semibold text-navy-500 mb-3">语音识别文本</h3>
                   <div className="p-4 bg-navy-50/50 rounded-lg text-sm text-navy-600 leading-relaxed">
-                    {transcript || "（未检测到语音输入）"}
+                    {submittedTranscript || "（未检测到语音输入）"}
                   </div>
                 </div>
 

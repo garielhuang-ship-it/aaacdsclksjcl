@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
-import { trpc } from "@/providers/trpc";
+import { trpc, getErrorMessage } from "@/providers/trpc";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useTimer, formatTime } from "@/hooks/useTimer";
 import {
@@ -38,6 +38,7 @@ export default function FullSimulation() {
     startListening,
     stopListening,
     resetTranscript,
+    getTranscript,
   } = useSpeechRecognition();
 
   const readingPrepTimer = useTimer(60);
@@ -45,8 +46,9 @@ export default function FullSimulation() {
   const speakingPrepTimer = useTimer(30);
   const speakingRecordTimer = useTimer(90);
 
-  const { data: passageData, isLoading: passageLoading } = trpc.reading.getRandom.useQuery();
-  const { data: questionData, isLoading: questionLoading } = trpc.speaking.generate.useQuery();
+  const { data: passageData, isLoading: passageLoading, error: passageError } = trpc.reading.getRandom.useQuery();
+  const { data: questionData, isLoading: questionLoading, error: questionError } = trpc.speaking.generate.useQuery(undefined, { staleTime: Infinity });
+  const loadError = passageError ?? questionError;
   const evaluateReadingMutation = trpc.evaluation.evaluateReading.useMutation();
   const evaluateSpeakingMutation = trpc.evaluation.evaluateSpeaking.useMutation();
 
@@ -108,11 +110,11 @@ export default function FullSimulation() {
     setStage("reading-eval");
 
     setTimeout(async () => {
-      const fullTranscript = transcript + (interimTranscript ? " " + interimTranscript : "");
+      const fullTranscript = getTranscript();
       if (!fullTranscript.trim()) {
         setReadingResult({
-          success: true, contentScore: 0, totalScore: 0, fluencyScore: 0,
-          feedback: "未检测到语音输入。", suggestions: ["检查麦克风权限"], highlights: [],
+          success: false, contentScore: null, totalScore: null, fluencyScore: null,
+          feedback: "未评分：未检测到语音识别结果，请检查麦克风权限后重新测试。", suggestions: [], highlights: [],
         });
         return;
       }
@@ -122,14 +124,14 @@ export default function FullSimulation() {
           duration: 120 - readingRecordTimer.timeLeft,
         });
         setReadingResult(result);
-      } catch {
+      } catch (err) {
         setReadingResult({
-          success: true, contentScore: 0, totalScore: 0, fluencyScore: 0,
-          feedback: "评价失败，请继续下一环节。", suggestions: [], highlights: [],
+          success: false, contentScore: null, totalScore: null, fluencyScore: null,
+          feedback: `未评分：${getErrorMessage(err)}。请继续下一环节。`, suggestions: [], highlights: [],
         });
       }
     }, 500);
-  }, [stopListening, transcript, interimTranscript, passageId, passage, evaluateReadingMutation, readingRecordTimer]);
+  }, [stopListening, getTranscript, passageId, passage, evaluateReadingMutation, readingRecordTimer]);
 
   const proceedToSpeaking = () => {
     resetTranscript();
@@ -153,11 +155,11 @@ export default function FullSimulation() {
     setStage("speaking-eval");
 
     setTimeout(async () => {
-      const fullTranscript = transcript + (interimTranscript ? " " + interimTranscript : "");
+      const fullTranscript = getTranscript();
       if (!fullTranscript.trim()) {
         setSpeakingResult({
-          success: true, understandingScore: 0, thinkingScore: 0, fluencyScore: 0, totalScore: 0,
-          feedback: "未检测到语音输入。", suggestions: [], grammarIssues: [],
+          success: false, understandingScore: null, thinkingScore: null, fluencyScore: null, totalScore: null,
+          feedback: "未评分：未检测到语音识别结果，请检查麦克风权限后重新测试。", suggestions: [], grammarIssues: [],
         });
         setStage("complete");
         return;
@@ -168,15 +170,15 @@ export default function FullSimulation() {
           duration: 90 - speakingRecordTimer.timeLeft,
         });
         setSpeakingResult(result);
-      } catch {
+      } catch (err) {
         setSpeakingResult({
-          success: true, understandingScore: 0, thinkingScore: 0, fluencyScore: 0, totalScore: 0,
-          feedback: "评价失败。", suggestions: [], grammarIssues: [],
+          success: false, understandingScore: null, thinkingScore: null, fluencyScore: null, totalScore: null,
+          feedback: `未评分：${getErrorMessage(err)}`, suggestions: [], grammarIssues: [],
         });
       }
       setStage("complete");
     }, 500);
-  }, [stopListening, transcript, interimTranscript, question, evaluateSpeakingMutation, speakingRecordTimer]);
+  }, [stopListening, getTranscript, question, evaluateSpeakingMutation, speakingRecordTimer]);
 
   const handleRestart = () => {
     window.location.reload();
@@ -264,10 +266,19 @@ export default function FullSimulation() {
           </div>
         )}
 
-        {stage === "loading" && (
+        {stage === "loading" && !loadError && (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-8 h-8 text-navy-500 animate-spin" />
             <span className="ml-3 text-navy-500">加载题目中...</span>
+          </div>
+        )}
+
+        {stage === "loading" && loadError && (
+          <div className="riell-card p-8 text-center">
+            <AlertCircle className="w-10 h-10 text-crimson-500 mx-auto mb-4" />
+            <h2 className="text-xl font-bold text-navy-500 mb-2">题目加载失败</h2>
+            <p className="text-muted-foreground mb-6">{getErrorMessage(loadError)}</p>
+            <button onClick={handleRestart} className="riell-btn-primary">重试</button>
           </div>
         )}
 
@@ -380,15 +391,15 @@ export default function FullSimulation() {
                   </div>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="text-center p-4 bg-navy-50 rounded-lg">
-                      <div className="text-3xl font-bold text-navy-500 font-mono">{readingResult.totalScore}</div>
+                      <div className="text-3xl font-bold text-navy-500 font-mono">{readingResult.totalScore ?? "—"}</div>
                       <div className="text-xs text-muted-foreground mt-1">总分 / 50</div>
                     </div>
                     <div className="text-center p-4 bg-navy-50 rounded-lg">
-                      <div className="text-3xl font-bold text-navy-500 font-mono">{readingResult.contentScore}</div>
+                      <div className="text-3xl font-bold text-navy-500 font-mono">{readingResult.contentScore ?? "—"}</div>
                       <div className="text-xs text-muted-foreground mt-1">内容完整度</div>
                     </div>
                     <div className="text-center p-4 bg-navy-50 rounded-lg">
-                      <div className="text-3xl font-bold text-navy-500 font-mono">{readingResult.fluencyScore}</div>
+                      <div className="text-3xl font-bold text-navy-500 font-mono">{readingResult.fluencyScore ?? "—"}</div>
                       <div className="text-xs text-muted-foreground mt-1">流畅度</div>
                     </div>
                   </div>
@@ -503,15 +514,15 @@ export default function FullSimulation() {
                 </h3>
                 <div className="grid grid-cols-3 gap-3 mb-4">
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{readingResult.contentScore}</div>
+                    <div className="text-xl font-bold text-navy-500">{readingResult.contentScore ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">内容完整度</div>
                   </div>
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{readingResult.fluencyScore}</div>
+                    <div className="text-xl font-bold text-navy-500">{readingResult.fluencyScore ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">流畅度</div>
                   </div>
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{readingResult.totalScore}</div>
+                    <div className="text-xl font-bold text-navy-500">{readingResult.totalScore ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">总分</div>
                   </div>
                 </div>
@@ -537,19 +548,19 @@ export default function FullSimulation() {
                 </h3>
                 <div className="grid grid-cols-4 gap-3 mb-4">
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{speakingResult.understandingScore}</div>
+                    <div className="text-xl font-bold text-navy-500">{speakingResult.understandingScore ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">理解能力 / 20</div>
                   </div>
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{speakingResult.thinkingScore}</div>
+                    <div className="text-xl font-bold text-navy-500">{speakingResult.thinkingScore ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">思辨能力 / 20</div>
                   </div>
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{speakingResult.fluencyScore}</div>
+                    <div className="text-xl font-bold text-navy-500">{speakingResult.fluencyScore ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">语音语调 / 10</div>
                   </div>
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
-                    <div className="text-xl font-bold text-navy-500">{speakingResult.totalScore}</div>
+                    <div className="text-xl font-bold text-navy-500">{speakingResult.totalScore ?? "—"}</div>
                     <div className="text-xs text-muted-foreground">总分 / 50</div>
                   </div>
                 </div>

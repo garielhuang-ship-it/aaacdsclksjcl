@@ -1,27 +1,11 @@
-import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
-import type { HttpBindings } from "@hono/node-server";
-import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { appRouter } from "./router";
-import { createContext } from "./context";
+// 本地 Node 服务器入口（Vite 开发服务器和 `npm run build:node` 使用）。
+// 部署到 Netlify 时由 netlify/functions/api.mts 承载同一个 app。
+import app from "./app";
 import { env } from "./lib/env";
-
-const app = new Hono<{ Bindings: HttpBindings }>();
-
-app.use(bodyLimit({ maxSize: 50 * 1024 * 1024 }));
-app.use("/api/trpc/*", async (c) => {
-  return fetchRequestHandler({
-    endpoint: "/api/trpc",
-    req: c.req.raw,
-    router: appRouter,
-    createContext,
-  });
-});
-app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
 export default app;
 
-if (env.isProduction) {
+if (env.isProduction && !process.env.NETLIFY) {
   const { serve } = await import("@hono/node-server");
   const { serveStaticFiles } = await import("./lib/vite");
   serveStaticFiles(app);
