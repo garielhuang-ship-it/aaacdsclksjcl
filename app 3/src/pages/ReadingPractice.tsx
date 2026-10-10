@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
-import { trpc } from "@/providers/trpc";
+import { trpc, getErrorMessage } from "@/providers/trpc";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useTimer, formatTime } from "@/hooks/useTimer";
 import {
@@ -27,6 +27,7 @@ export default function ReadingPractice() {
   const [passageTitle, setPassageTitle] = useState("");
   const [trainingFocus, setTrainingFocus] = useState("");
   const [evaluationResult, setEvaluationResult] = useState<any>(null);
+  const [evaluationError, setEvaluationError] = useState<string | null>(null);
 
   const {
     transcript,
@@ -36,6 +37,7 @@ export default function ReadingPractice() {
     startListening,
     stopListening,
     resetTranscript,
+    getTranscript,
   } = useSpeechRecognition();
 
   const prepTimer = useTimer(60);
@@ -89,18 +91,9 @@ export default function ReadingPractice() {
 
     // 延迟确保 final transcript 已更新
     setTimeout(async () => {
-      const fullTranscript = transcript + (interimTranscript ? " " + interimTranscript : "");
-      if (!fullTranscript.trim()) {
-        setEvaluationResult({
-          success: true,
-          contentScore: 0,
-          totalScore: 0,
-          fluencyScore: 0,
-          feedback: "未检测到语音输入。请确保麦克风正常工作，并在安静环境中朗读。",
-          suggestions: ["检查浏览器麦克风权限", "使用 Chrome 或 Edge 浏览器", "确保在安静环境中练习"],
-          highlights: [],
-        });
-        setPhase("evaluating");
+      const fullTranscript = getTranscript();
+      if (!fullTranscript) {
+        setEvaluationError("未检测到语音识别结果，未进行评分。请检查浏览器麦克风权限，并在安静环境中靠近麦克风朗读。");
         return;
       }
 
@@ -114,22 +107,15 @@ export default function ReadingPractice() {
         setEvaluationResult(result);
       } catch (err) {
         console.error("Evaluation error:", err);
-        setEvaluationResult({
-          success: true,
-          contentScore: 0,
-          totalScore: 0,
-          fluencyScore: 0,
-          feedback: "评价服务暂时不可用，请稍后重试。",
-          suggestions: ["检查网络连接", "稍后重新提交"],
-          highlights: [],
-        });
+        setEvaluationError(getErrorMessage(err));
       }
     }, 500);
-  }, [stopListening, transcript, interimTranscript, passageId, passage, evaluateMutation, recordTimer]);
+  }, [stopListening, getTranscript, passageId, passage, evaluateMutation, recordTimer]);
 
   const handleRetry = () => {
     resetTranscript();
     setEvaluationResult(null);
+    setEvaluationError(null);
     setPhase("ready");
     prepTimer.reset(60);
     recordTimer.reset(120);
@@ -295,6 +281,10 @@ export default function ReadingPractice() {
               </div>
             </div>
 
+            <div className="riell-card p-6 text-center text-sm text-muted-foreground">
+              原文已隐藏，请凭准备阶段的记忆朗读《{passageTitle}》
+            </div>
+
             <div className="riell-card p-6">
               <h3 className="text-sm font-medium text-muted-foreground mb-3">实时转写</h3>
               <div className="min-h-[100px] p-4 bg-navy-50/50 rounded-lg text-navy-600">
@@ -326,7 +316,17 @@ export default function ReadingPractice() {
 
         {phase === "evaluating" && (
           <div className="space-y-6">
-            {!evaluationResult ? (
+            {evaluationError ? (
+              <div className="riell-card p-8 text-center">
+                <AlertCircle className="w-10 h-10 text-crimson-500 mx-auto mb-4" />
+                <h2 className="text-xl font-bold text-navy-500 mb-2">评价未完成</h2>
+                <p className="text-muted-foreground mb-6">{evaluationError}</p>
+                <button onClick={handleRetry} className="riell-btn-outline">
+                  <RotateCcw className="w-4 h-4" />
+                  重新朗读
+                </button>
+              </div>
+            ) : !evaluationResult ? (
               <div className="riell-card p-12 text-center">
                 <Loader2 className="w-10 h-10 text-navy-500 animate-spin mx-auto mb-4" />
                 <h2 className="text-xl font-bold text-navy-500 mb-2">AI 评价中</h2>
@@ -363,6 +363,39 @@ export default function ReadingPractice() {
                   </p>
                 </div>
 
+                {(evaluationResult.missedWords?.length > 0 || evaluationResult.misreadWords?.length > 0) && (
+                  <div className="riell-card p-6">
+                    <h3 className="font-semibold text-navy-500 mb-3 flex items-center gap-2">
+                      <AlertCircle className="w-5 h-5 text-crimson-500" />
+                      漏读与错读
+                    </h3>
+                    {evaluationResult.missedWords?.length > 0 && (
+                      <div className="mb-3">
+                        <p className="text-sm text-muted-foreground mb-2">漏读（原文中未识别到）：</p>
+                        <div className="flex flex-wrap gap-2">
+                          {evaluationResult.missedWords.map((w: string, i: number) => (
+                            <span key={i} className="text-sm px-2 py-1 bg-crimson-50 text-crimson-700 rounded line-through">{w}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {evaluationResult.misreadWords?.length > 0 && (
+                      <div>
+                        <p className="text-sm text-muted-foreground mb-2">错读（原文 → 识别结果）：</p>
+                        <div className="space-y-1">
+                          {evaluationResult.misreadWords.map((w: { expected: string; heard: string }, i: number) => (
+                            <p key={i} className="text-sm">
+                              <span className="text-green-700">{w.expected}</span>
+                              <span className="text-muted-foreground mx-2">→</span>
+                              <span className="text-crimson-600">{w.heard}</span>
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {evaluationResult.highlights?.length > 0 && (
                   <div className="riell-card p-6">
                     <h3 className="font-semibold text-navy-500 mb-3 flex items-center gap-2">
@@ -398,10 +431,14 @@ export default function ReadingPractice() {
                 )}
 
                 <div className="riell-card p-6">
-                  <h3 className="font-semibold text-navy-500 mb-3">你的朗读转写</h3>
+                  <h3 className="font-semibold text-navy-500 mb-3">语音识别文本</h3>
                   <div className="p-4 bg-navy-50/50 rounded-lg text-sm text-navy-600 leading-relaxed">
                     {transcript || "（未检测到语音输入）"}
                   </div>
+                  <p className="text-xs text-muted-foreground mt-3">
+                    说明：系统通过浏览器语音识别把朗读转成文字，再与原文比对并由 DeepSeek 分析。无法直接分析音频中的发音和语调；
+                    识别错误也可能被计为“错读”，结果仅供参考。
+                  </p>
                 </div>
 
                 <div className="flex gap-4">

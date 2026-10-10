@@ -1,9 +1,18 @@
 import { z } from "zod";
-import { createRouter, publicQuery } from "../middleware";
+import { aiProcedure, createRouter, publicQuery } from "../middleware";
 import { getDb } from "../queries/connection";
-import { practiceRecords } from "@db/schema";
+import { practiceRecords } from "../../db/schema";
 import { eq } from "drizzle-orm";
-import { evaluateReading, evaluateSpeaking } from "../lib/deepseek";
+import { evaluateImpromptu, evaluateReading, evaluateSpeaking } from "../lib/deepseek";
+
+// 保存练习记录；保存失败不影响把评分结果返回给用户
+async function saveRecord(record: typeof practiceRecords.$inferInsert) {
+  try {
+    await getDb().insert(practiceRecords).values(record);
+  } catch (error) {
+    console.error("Failed to save practice record:", error instanceof Error ? error.message : error);
+  }
+}
 
 // 计算文本相似度（基于编辑距离）
 function calculateSimilarity(original: string, transcript: string): number {
@@ -35,175 +44,174 @@ function calculateSimilarity(original: string, transcript: string): number {
   return Math.round((lcsLength / m) * 50);
 }
 
+// 原文与识别文本逐词比对，找出漏读和错读（基于真实识别结果计算）
+function diffWords(original: string, transcript: string) {
+  const norm = (t: string) => t.split(/\s+/).filter(Boolean);
+  const key = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+  const orig = norm(original).filter((w) => key(w));
+  const heard = norm(transcript).filter((w) => key(w));
+  const m = orig.length, n = heard.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[i][j] = key(orig[i]) === key(heard[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+
+  const missedWords: string[] = [];
+  const misreadWords: Array<{ expected: string; heard: string }> = [];
+  let gapOrig: string[] = [], gapHeard: string[] = [];
+  const flush = () => {
+    if (gapOrig.length && gapHeard.length) {
+      misreadWords.push({ expected: gapOrig.join(" "), heard: gapHeard.join(" ") });
+    } else if (gapOrig.length) {
+      missedWords.push(gapOrig.join(" "));
+    }
+    gapOrig = [];
+    gapHeard = [];
+  };
+  let i = 0, j = 0;
+  while (i < m || j < n) {
+    if (i < m && j < n && key(orig[i]) === key(heard[j])) {
+      flush();
+      i++; j++;
+    } else if (j >= n || (i < m && dp[i + 1][j] >= dp[i][j + 1])) {
+      gapOrig.push(orig[i++]);
+    } else {
+      gapHeard.push(heard[j++]);
+    }
+  }
+  flush();
+  return { missedWords: missedWords.slice(0, 30), misreadWords: misreadWords.slice(0, 30) };
+}
+
+// 输入长度限制
+const MAX_PASSAGE = 5000;
+const MAX_QUESTION = 500;
+const MAX_TRANSCRIPT = 3000;
+
+const nonEmptyTranscript = z
+  .string()
+  .trim()
+  .min(1, "未检测到回答内容")
+  .max(MAX_TRANSCRIPT, `回答内容过长（最多 ${MAX_TRANSCRIPT} 个字符）`);
+
 export const evaluationRouter = createRouter({
   // 评价朗读表现
-  evaluateReading: publicQuery
+  evaluateReading: aiProcedure
     .input(
       z.object({
-        passageId: z.number(),
-        passage: z.string(),
-        transcript: z.string(),
-        duration: z.number().optional(),
+        passageId: z.number().int().positive(),
+        passage: z.string().min(1).max(MAX_PASSAGE),
+        transcript: nonEmptyTranscript,
+        duration: z.number().int().min(0).max(3600).optional(),
       })
     )
     .mutation(async ({ input }) => {
       // 计算内容完整度
       const contentScore = calculateSimilarity(input.passage, input.transcript);
 
-      try {
-        // 调用 DeepSeek 进行 AI 评价
-        const aiResult = await evaluateReading(
-          input.passage,
-          input.transcript,
-          contentScore
-        );
+      // 调用 DeepSeek 进行 AI 评价；失败时直接把错误返回给前端，不使用写死的分数
+      const wordDiff = diffWords(input.passage, input.transcript);
+      const aiResult = await evaluateReading(input.passage, input.transcript, contentScore, wordDiff);
 
-        // 保存记录
-        const db = getDb();
-        const sessionId = crypto.randomUUID();
-        await db.insert(practiceRecords).values({
-          sessionId,
-          mode: "reading",
-          passageId: input.passageId,
-          transcript: input.transcript,
-          audioDuration: input.duration,
-          contentScore,
-          totalScore: aiResult.totalScore,
-          fluencyScore: aiResult.fluencyScore,
-          aiFeedback: {
-            feedback: aiResult.feedback,
-            suggestions: aiResult.suggestions,
-            highlights: aiResult.highlights,
-          },
-        });
-
-        return {
-          success: true,
-          sessionId,
-          contentScore,
-          totalScore: aiResult.totalScore,
-          fluencyScore: aiResult.fluencyScore,
+      const sessionId = crypto.randomUUID();
+      await saveRecord({
+        sessionId,
+        mode: "reading",
+        passageId: input.passageId,
+        transcript: input.transcript,
+        audioDuration: input.duration,
+        contentScore,
+        totalScore: aiResult.totalScore,
+        fluencyScore: aiResult.fluencyScore,
+        aiFeedback: {
           feedback: aiResult.feedback,
           suggestions: aiResult.suggestions,
           highlights: aiResult.highlights,
-        };
-      } catch (error) {
-        console.error("Reading evaluation failed:", error);
-        // 降级返回基础评分
-        const sessionId = crypto.randomUUID();
-        const db = getDb();
-        await db.insert(practiceRecords).values({
-          sessionId,
-          mode: "reading",
-          passageId: input.passageId,
-          transcript: input.transcript,
-          audioDuration: input.duration,
-          contentScore,
-          totalScore: contentScore,
-          fluencyScore: Math.round(contentScore * 0.9),
-          aiFeedback: {
-            feedback: "朗读已完成。基于文本比对的内容完整度评分如下。",
-            suggestions: ["注意单词发音准确性", "保持适当语速", "注意停顿和节奏"],
-            highlights: ["完成了全文朗读"],
-          },
-        });
+        },
+      });
 
-        return {
-          success: true,
-          sessionId,
-          contentScore,
-          totalScore: contentScore,
-          fluencyScore: Math.round(contentScore * 0.9),
-          feedback: "朗读已完成。基于文本比对的内容完整度评分如下。",
-          suggestions: ["注意单词发音准确性", "保持适当语速", "注意停顿和节奏"],
-          highlights: ["完成了全文朗读"],
-        };
-      }
+      return {
+        success: true,
+        sessionId,
+        contentScore,
+        ...wordDiff,
+        ...aiResult,
+      };
     }),
 
   // 评价口语问答表现
-  evaluateSpeaking: publicQuery
+  evaluateSpeaking: aiProcedure
     .input(
       z.object({
-        question: z.string(),
-        transcript: z.string(),
-        duration: z.number().optional(),
+        question: z.string().trim().min(1).max(MAX_QUESTION),
+        transcript: nonEmptyTranscript.refine(
+          (t) => /[a-zA-Z]{2,}/.test(t),
+          "请用英文回答"
+        ),
+        duration: z.number().int().min(0).max(3600).optional(),
       })
     )
     .mutation(async ({ input }) => {
-      try {
-        const aiResult = await evaluateSpeaking(input.question, input.transcript);
+      const aiResult = await evaluateSpeaking(input.question, input.transcript);
 
-        // 保存记录
-        const db = getDb();
-        const sessionId = crypto.randomUUID();
-        await db.insert(practiceRecords).values({
-          sessionId,
-          mode: "speaking",
-          questionText: input.question,
-          transcript: input.transcript,
-          audioDuration: input.duration,
-          contentScore: aiResult.understandingScore,
-          thinkingScore: aiResult.thinkingScore,
-          fluencyScore: aiResult.fluencyScore,
-          totalScore: aiResult.totalScore,
-          aiFeedback: {
-            feedback: aiResult.feedback,
-            suggestions: aiResult.suggestions,
-            grammarIssues: aiResult.grammarIssues,
-          },
-        });
-
-        return {
-          success: true,
-          sessionId,
-          understandingScore: aiResult.understandingScore,
-          thinkingScore: aiResult.thinkingScore,
-          fluencyScore: aiResult.fluencyScore,
-          totalScore: aiResult.totalScore,
+      const sessionId = crypto.randomUUID();
+      await saveRecord({
+        sessionId,
+        mode: "speaking",
+        questionText: input.question,
+        transcript: input.transcript,
+        audioDuration: input.duration,
+        contentScore: aiResult.understandingScore,
+        thinkingScore: aiResult.thinkingScore,
+        fluencyScore: aiResult.fluencyScore,
+        totalScore: aiResult.totalScore,
+        aiFeedback: {
           feedback: aiResult.feedback,
           suggestions: aiResult.suggestions,
           grammarIssues: aiResult.grammarIssues,
-        };
-      } catch (error) {
-        console.error("Speaking evaluation failed:", error);
-        // 降级返回
-        const sessionId = crypto.randomUUID();
-        const db = getDb();
-        await db.insert(practiceRecords).values({
-          sessionId,
-          mode: "speaking",
-          questionText: input.question,
-          transcript: input.transcript,
-          audioDuration: input.duration,
-          contentScore: 15,
-          thinkingScore: 15,
-          fluencyScore: 7,
-          totalScore: 37,
-          aiFeedback: {
-            feedback: "回答已完成。建议加强语法准确性和逻辑连贯性。",
-            suggestions: ["注意语法准确性", "增加具体例子支撑观点", "使用连接词增强逻辑性"],
-            grammarIssues: [],
-          },
-        });
+          revisedAnswer: aiResult.revisedAnswer,
+        },
+      });
 
-        return {
-          success: true,
-          sessionId,
-          understandingScore: 15,
-          thinkingScore: 15,
-          fluencyScore: 7,
-          totalScore: 37,
-          feedback: "回答已完成。建议加强语法准确性和逻辑连贯性。",
-          suggestions: ["注意语法准确性", "增加具体例子支撑观点", "使用连接词增强逻辑性"],
-          grammarIssues: [],
-        };
-      }
+      return {
+        success: true,
+        sessionId,
+        ...aiResult,
+      };
+    }),
+
+  // 即兴提问训练：五维度评分
+  evaluateAnswer: aiProcedure
+    .input(
+      z.object({
+        question: z.string().trim().min(1).max(MAX_QUESTION),
+        transcript: nonEmptyTranscript.refine((t) => /[a-zA-Z]{2,}/.test(t), "请用英文回答"),
+        duration: z.number().int().min(0).max(3600).optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const aiResult = await evaluateImpromptu(input.question, input.transcript);
+
+      const sessionId = crypto.randomUUID();
+      await saveRecord({
+        sessionId,
+        mode: "speaking",
+        questionText: input.question,
+        transcript: input.transcript,
+        audioDuration: input.duration,
+        contentScore: aiResult.relevanceScore,
+        thinkingScore: aiResult.logicScore,
+        fluencyScore: aiResult.naturalnessScore,
+        totalScore: aiResult.totalScore,
+        aiFeedback: aiResult,
+      });
+
+      return { success: true, sessionId, ...aiResult };
     }),
 
   // 获取练习记录
   getRecord: publicQuery
-    .input(z.object({ sessionId: z.string() }))
+    .input(z.object({ sessionId: z.string().max(64) }))
     .query(async ({ input }) => {
       const db = getDb();
       const results = await db

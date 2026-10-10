@@ -1,0 +1,14 @@
+# 网站代码在 "app 3" 文件夹里；base 保持在仓库根目录，
+# 这样 Netlify Database 能在根目录的 netlify/database/migrations 找到迁移文件。
+[build]
+  command = "cd 'app 3' && npm ci && npm run build"
+  publish = "app 3/dist/public"
+
+[functions]
+  directory = "app 3/netlify/functions"
+
+# 单页应用：前端路由（/reading、/speaking 等）都回到 index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
