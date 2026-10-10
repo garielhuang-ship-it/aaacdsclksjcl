@@ -281,8 +281,9 @@ export default function ReadingPractice() {
               </div>
             </div>
 
-            <div className="riell-card p-6 text-center text-sm text-muted-foreground">
-              原文已隐藏，请凭准备阶段的记忆朗读《{passageTitle}》
+            <div className="riell-card p-8">
+              <h3 className="text-xl font-bold text-navy-500 font-display mb-4">{passageTitle}</h3>
+              <div className="text-lg leading-relaxed text-navy-600">{passage}</div>
             </div>
 
             <div className="riell-card p-6">
@@ -343,20 +344,19 @@ export default function ReadingPractice() {
                       </div>
                       <div className="text-sm text-blue-100/80 mt-1">总分 / 50</div>
                     </div>
-                    <div className="w-px bg-white/20" />
-                    <div className="text-center">
-                      <div className="text-5xl font-bold text-gold-400 font-mono">
-                        {evaluationResult.contentScore}
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    {[
+                      ["语音语调", evaluationResult.pronunciationScore, 20],
+                      ["语速", evaluationResult.paceScore, 10],
+                      ["流畅度", evaluationResult.fluencyScore, 15],
+                      ["完整度", evaluationResult.completenessScore, 5],
+                    ].map(([label, value, max]) => (
+                      <div key={label} className="text-center">
+                        <div className="text-3xl font-bold text-gold-400 font-mono">{value}</div>
+                        <div className="text-sm text-blue-100/80 mt-1">{label} / {max}</div>
                       </div>
-                      <div className="text-sm text-blue-100/80 mt-1">内容完整度 / 50</div>
-                    </div>
-                    <div className="w-px bg-white/20" />
-                    <div className="text-center">
-                      <div className="text-5xl font-bold text-gold-400 font-mono">
-                        {evaluationResult.fluencyScore}
-                      </div>
-                      <div className="text-sm text-blue-100/80 mt-1">流畅度 / 50</div>
-                    </div>
+                    ))}
                   </div>
                   <p className="text-blue-100/90 leading-relaxed max-w-xl mx-auto">
                     {evaluationResult.feedback}

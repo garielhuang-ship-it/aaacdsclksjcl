@@ -144,109 +144,125 @@ export async function generateSpeakingQuestion(
   category: string;
   tips: string[];
 }> {
-  const systemPrompt = `你是外研社杯全国中学生外语素养大赛的口语考官。请根据以下要求生成一道高质量的即兴英语口语题目。
+  // 出题比例：日常话题类 60%，辩证观点类 40%（由代码抽取，保证比例稳定）
+  const isDaily = Math.random() < 0.6;
+  const typeRule = isDaily
+    ? "日常话题类：询问学生的梦想、习惯、喜欢做的事、个人经历或选择等，要求说明做什么＋为什么。"
+    : "辩证观点类：在题目中给出两种对立观点，要求学生表明立场并论证。";
+
+  const systemPrompt = `你是外研社杯全国中学生外语素养大赛的口语考官，请生成一道英文即兴问答题。
+
+本题题型：${typeRule}
 
 要求：
-1. 题目应符合中国高中生的认知水平和英语表达能力
-2. 题目应具有思辨性，能考察学生的逻辑思维
-3. 题目用英文，格式为直接提问，简洁明了
-4. 同时提供3-4个中文答题提示，帮助学生构建回答思路
-5. 每次生成不同的题目，避免陈词滥调
-6. 只返回JSON
+- 回答时长 1.5 分钟 ≈ 120～180 词，题目难度据此把握，适合中国高中生
+- 参考作答结构 Point → Explain → Example → Extend，仅用于把握难度，不作硬性要求，也不要写进题目
+- 禁止：是非题（能用 yes/no 回答的题）、需要专业知识才能回答的题、政治／宗教／伦理争议题
+- 输出只有 Question 一句英文，不加任何标签、说明、提示或展开点
+- 每次生成不同的题目
 
-评分标准参考：
-- 理解能力(20分)：对问题透彻理解，能准确归纳要点
-- 思辨能力(20分)：能够合理分析及回应，逻辑严谨
-- 语音语调(10分)：语音正确，语速适宜，语言流畅
-
-返回JSON格式：
-{
-  "question": "英文题目内容",
-  "category": "题目分类",
-  "tips": ["提示1", "提示2", "提示3"]
-}`;
+只返回JSON：{"question": "英文题目"}`;
 
   const level = DIFFICULTY_LABEL[difficulty ?? "medium"];
-  const userPrompt = category
-    ? `请生成一道"${category}"类别的${level}难度即兴问答题。`
-    : `请随机生成一道${level}难度的即兴问答题，从以下类别中任选一个：${SPEAKING_CATEGORIES.join("、")}。`;
+  // 话题方向也由代码随机抽取，避免模型反复出同类题
+  const pick = <T,>(list: readonly T[]) => list[Math.floor(Math.random() * list.length)];
+  const angle = isDaily ? `，切入点：${pick(["梦想与目标", "习惯", "喜欢做的事", "个人经历", "个人选择", "身边的人或地方"])}` : "";
+  const userPrompt = `请围绕"${category || pick(SPEAKING_CATEGORIES)}"相关话题生成一道${level}难度的题目${angle}。`;
 
   const content = await callDeepSeek(
     [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ],
-    { temperature: 1.0, maxTokens: 600 },
+    { temperature: 1.0, maxTokens: 300 },
   );
 
   const result = parseAiJson(content, questionSchema);
   return {
-    question: result.question.trim(),
-    category: result.category?.trim() || category || "综合思辨类",
-    tips: result.tips.slice(0, 4),
+    // 去掉模型可能附加的 "Question:" 等标签，只保留题目一句
+    question: result.question.replace(/^\s*(question|q)\s*[:：]\s*/i, "").split(/\n/)[0].trim(),
+    category: category || (isDaily ? "日常话题类" : "辩证观点类"),
+    // 出题规范：只输出题目本身，不再附带答题提示
+    tips: [],
   };
 }
 
+// 评分规范（完整写入评分接口的 system prompt；朗读与问答各用各自评分表）
+const EXAM_SPEC = `【考试结构】线上，朗读：准备1分钟，限时2分钟，50分；问答：准备30秒，限时1.5分钟，50分＋升华加分≤5，总分≤100。朗读全程屏幕显示原文。
+
+【朗读评分50】语音语调20：音素准确、重音合理、语调自然；语速10：快慢适中；流畅度15：连贯、少停顿回读；完整度5：不漏词跳句。
+
+【问答评分50】理解能力20：准确归纳要点并切题，语句完整、语法正确、条理清晰、语言得体；思辨能力20：逻辑严谨（观点→理由→例证），观点积极；语音语调10：语音语调正确、语速适宜、流畅。升华加分≤5：结尾有个人思考或价值提升且贴切自然，酌情1～5分；喊口号不加分。
+
+【时间违规】超时自动截断不计；问答不足1分钟思辨分最高一半。
+
+【出题规范】朗读题：说明文、记叙性说明文、议论文、演讲，130～180词，中国高中课标内，生词率≤2%，简单句并列句为主，2分钟内可读完。问答题：日常话题类（做什么＋为什么）或辩证观点类（对立观点表态论证），1.5分钟≈120～180词，禁是非题与政治宗教争议题。参考结构Point→Explain→Example→Extend，不作硬性要求。出题只输出题目本身。`;
+
+const FEEDBACK_RULES = `改进建议要求：
+- languageSuggestions：语言层面（语音、词汇、语法、句式等）2-3 条
+- contentSuggestions：内容逻辑层面（意群与停顿、结构、论证、衔接等）2-3 条
+- 每条必须具体、可操作，引用学生实际出现的问题并给出改法；禁止“继续努力”“多加练习”之类空泛评价
+- 你只能看到语音识别文本，无法听到音频；涉及语音的分项需基于识别结果与时长合理推断，评分严格依据实际表现`;
+
+// 将两类建议合并为一个列表，保证“语言层面＋内容逻辑层面”都出现
+const mergeSuggestions = (lang: string[], content: string[]) => [
+  ...lang.map((s) => `【语言】${s}`),
+  ...content.map((s) => `【内容逻辑】${s}`),
+];
+
 const readingSchema = z.object({
-  fluencyScore: score(50),
-  totalScore: score(50),
+  pronunciationScore: score(20),
+  paceScore: score(10),
+  fluencyScore: score(15),
+  completenessScore: score(5),
   feedback: z.string().min(1),
-  suggestions: stringList,
+  languageSuggestions: stringList,
+  contentSuggestions: stringList,
   highlights: stringList,
 });
 
-// 评价朗读表现
+// 评价朗读表现（仅使用【朗读评分50】）
 export async function evaluateReading(
   passage: string,
   transcript: string,
   contentScore: number,
   wordDiff?: { missedWords: string[]; misreadWords: Array<{ expected: string; heard: string }> },
-): Promise<{
-  totalScore: number;
-  fluencyScore: number;
-  feedback: string;
-  suggestions: string[];
-  highlights: string[];
-}> {
-  const systemPrompt = `你是外研社杯全国中学生外语素养大赛的朗读评委。请根据学生的朗读转录文本和原文进行对比分析，给出专业评价。
+  duration?: number,
+) {
+  const systemPrompt = `你是外研社杯全国中学生外语素养大赛的朗读评委。以下是完整评分规范：
 
-评分标准（满分50分）：
-- 朗读技能(50分)：语音、语调正确，语速适宜，朗读流畅
+${EXAM_SPEC}
 
-当前技术限制说明：
-- 系统暂通过语音识别(ASR)文本与原文的相似度来计算"内容完整度"分数
-- 你无法直接听到音频，只能基于转录文本进行评价
-- 请基于文本差异推断可能的朗读问题，并具体指出漏读、错读、添读的单词
+本次评的是【朗读】，只能使用【朗读评分50】：语音语调(0-20)、语速(0-10)、流畅度(0-15)、完整度(0-5)。不得使用问答评分表的任何分项，不得给升华加分。
 
-请从以下维度给出评价：
-1. 内容完整度分析（漏词、错词、添词情况）
-2. 流畅度推断（基于文本连贯性）
-3. 改进建议（具体、可操作）
-4. 整体评语（鼓励性为主）
+${FEEDBACK_RULES}
 
-只返回JSON：
+只返回JSON，字段顺序即输出结构（总分由系统按分项相加）：
 {
-  "totalScore": 总分(0-50),
-  "fluencyScore": 流畅度分数(0-50),
-  "feedback": "整体评语",
-  "suggestions": ["建议1", "建议2", "建议3"],
-  "highlights": ["亮点1", "亮点2"]
+  "pronunciationScore": 语音语调(0-20),
+  "paceScore": 语速(0-10),
+  "fluencyScore": 流畅度(0-15),
+  "completenessScore": 完整度(0-5),
+  "feedback": "一两句总体评语",
+  "languageSuggestions": ["语言层面建议"],
+  "contentSuggestions": ["内容逻辑层面建议"],
+  "highlights": ["基于原文的亮点"]
 }`;
 
-  const userPrompt = `【原文】
+  const words = passage.split(/\s+/).filter(Boolean).length;
+  const userPrompt = `【原文】（${words} 词）
 ${passage}
 
 【学生朗读转录】
 ${transcript}
 
-【内容完整度得分】
-${contentScore}/50
+【朗读用时】${duration != null ? `${duration} 秒（限时 120 秒，超时部分已截断不计）` : "未知"}
+
+【文本相似度参考】${contentScore}/50
 
 【系统比对结果】
 漏读：${wordDiff?.missedWords.join(" | ") || "无"}
-错读（原文 → 识别）：${wordDiff?.misreadWords.map((w) => `${w.expected} → ${w.heard}`).join(" | ") || "无"}
-
-请结合比对结果给出专业评价，建议要针对具体的漏读、错读内容。`;
+错读（原文 → 识别）：${wordDiff?.misreadWords.map((w) => `${w.expected} → ${w.heard}`).join(" | ") || "无"}`;
 
   const content = await callDeepSeek(
     [
@@ -256,15 +272,28 @@ ${contentScore}/50
     { temperature: 0.3, maxTokens: 1500 },
   );
 
-  return parseAiJson(content, readingSchema);
+  const r = parseAiJson(content, readingSchema);
+  return {
+    totalScore: r.pronunciationScore + r.paceScore + r.fluencyScore + r.completenessScore,
+    pronunciationScore: r.pronunciationScore,
+    paceScore: r.paceScore,
+    fluencyScore: r.fluencyScore,
+    completenessScore: r.completenessScore,
+    feedback: r.feedback,
+    suggestions: mergeSuggestions(r.languageSuggestions, r.contentSuggestions),
+    highlights: r.highlights,
+  };
 }
 
 const speakingSchema = z.object({
   understandingScore: score(20),
   thinkingScore: score(20),
   fluencyScore: score(10),
+  bonusScore: score(5),
   feedback: z.string().min(1),
-  suggestions: stringList,
+  languageSuggestions: stringList,
+  contentSuggestions: stringList,
+  strengths: stringList,
   grammarIssues: z
     .array(
       z.object({
@@ -277,54 +306,43 @@ const speakingSchema = z.object({
   revisedAnswer: z.string().default(""),
 });
 
-// 评价口语问答表现
-export async function evaluateSpeaking(
-  question: string,
-  transcript: string,
-): Promise<{
-  understandingScore: number;
-  thinkingScore: number;
-  fluencyScore: number;
-  totalScore: number;
-  feedback: string;
-  suggestions: string[];
-  grammarIssues: Array<{ issue: string; correction: string; explanation?: string }>;
-  revisedAnswer: string;
-}> {
-  const systemPrompt = `你是外研社杯全国中学生外语素养大赛的口语考官。请根据学生的即兴回答（语音识别转写文本）进行评价。
+// 评价口语问答表现（仅使用【问答评分50】＋升华加分）
+export async function evaluateSpeaking(question: string, transcript: string, duration?: number) {
+  const short = duration != null && duration < 60;
+  const systemPrompt = `你是外研社杯全国中学生外语素养大赛的口语考官。以下是完整评分规范：
 
-评分标准（满分50分）：
-- 理解能力(20分)：对问题透彻理解，能准确归纳要点；答题语句完整，语法正确，条理清晰
-- 思辨能力(20分)：能够根据问题进行合理分析及回应，逻辑严谨，观点积极向上
-- 语音语调(10分)：语音、语调正确，语速适宜，语言流畅
+${EXAM_SPEC}
 
-注意：
-- 你无法直接听到音频，只能基于转录文本评价
-- 语音语调部分需基于文本推断（如用词丰富度、句式多样性、是否流畅连贯可间接反映语言能力）
-- 评分必须严格依据学生的实际回答；回答很短、跑题或几乎没有内容时要给低分
-- 逐条找出回答中真实存在的语法、用词错误：issue 引用学生原句片段，correction 给出正确形式，explanation 用中文解释原因
-- revisedAnswer：在保留学生原有观点的基础上，给出一段修改润色后的英文参考答案（约 120-180 词）
-- suggestions：3-4 条具体、可操作的中文改进建议
-- feedback：中文整体评语，指出优点与主要不足
+本次评的是【问答】，只能使用【问答评分50】：理解能力(0-20)、思辨能力(0-20)、语音语调(0-10)，另加升华加分(0-5)。不得使用朗读评分表的任何分项。
+- 回答很短、跑题或几乎没有内容时要给低分
+- 升华加分只给结尾贴切自然的个人思考或价值提升，喊口号或没有则给 0
+- 回答不足 1 分钟时，思辨能力最高 10 分
 
-只返回JSON：
+${FEEDBACK_RULES}
+- grammarIssues：逐条列出回答中真实存在的语法、用词错误，issue 引用学生原句片段，correction 给出正确形式，explanation 用中文解释
+- revisedAnswer：保留学生观点，给出一段润色后的英文参考答案（120-180 词）
+
+只返回JSON，字段顺序即输出结构（总分由系统按分项相加）：
 {
-  "understandingScore": 理解能力分(0-20),
-  "thinkingScore": 思辨能力分(0-20),
-  "fluencyScore": 语音语调分(0-10),
-  "feedback": "整体评语",
-  "suggestions": ["建议1", "建议2", "建议3"],
+  "understandingScore": 理解能力(0-20),
+  "thinkingScore": 思辨能力(0-20),
+  "fluencyScore": 语音语调(0-10),
+  "bonusScore": 升华加分(0-5),
+  "feedback": "一两句总体评语",
+  "languageSuggestions": ["语言层面建议"],
+  "contentSuggestions": ["内容逻辑层面建议"],
+  "strengths": ["基于原文的优点"],
   "grammarIssues": [{"issue": "原句片段", "correction": "正确形式", "explanation": "错误原因"}],
-  "revisedAnswer": "修改后的英文参考答案"
+  "revisedAnswer": "英文参考答案"
 }`;
 
   const userPrompt = `【题目】
 ${question}
 
-【学生回答】
+【学生回答（语音识别文本）】
 ${transcript}
 
-请给出专业评价。`;
+【回答用时】${duration != null ? `${duration} 秒（限时 90 秒，超时部分已截断不计）${short ? "，不足 1 分钟" : ""}` : "未知"}`;
 
   const content = await callDeepSeek(
     [
@@ -334,80 +352,19 @@ ${transcript}
     { temperature: 0.3, maxTokens: 2000 },
   );
 
-  const result = parseAiJson(content, speakingSchema);
+  const r = parseAiJson(content, speakingSchema);
+  // 时间违规：不足 1 分钟思辨分最高一半
+  const thinkingScore = short ? Math.min(r.thinkingScore, 10) : r.thinkingScore;
   return {
-    ...result,
-    // 总分由各项相加，保证与分项一致
-    totalScore: result.understandingScore + result.thinkingScore + result.fluencyScore,
-  };
-}
-
-const impromptuSchema = z.object({
-  relevanceScore: score(20),
-  logicScore: score(20),
-  grammarScore: score(20),
-  vocabularyScore: score(20),
-  naturalnessScore: score(20),
-  feedback: z.string().min(1),
-  strengths: stringList,
-  improvements: z
-    .array(
-      z.object({
-        quote: z.coerce.string(),
-        problem: z.coerce.string(),
-        suggestion: z.coerce.string(),
-      }),
-    )
-    .default([]),
-  suggestions: stringList,
-  revisedAnswer: z.string().default(""),
-});
-
-// 即兴提问训练：五个维度评分（每项 20 分，满分 100）
-export async function evaluateImpromptu(question: string, transcript: string) {
-  const systemPrompt = `你是一名经验丰富的中国高中英语口语老师。学生针对题目做了即兴英文口头回答，下面是语音识别得到的文本。请严格依据学生实际说出的内容评分。
-
-评分维度（每项 0-20 分）：
-- relevanceScore 内容切题程度：是否紧扣题目、回答了题目要求
-- logicScore 表达逻辑与完整性：结构是否清晰、观点是否有理由和例子支撑、是否完整
-- grammarScore 语法准确度
-- vocabularyScore 词汇丰富度：用词是否多样、准确，是否有高中阶段较好的表达
-- naturalnessScore 表达自然度：是否地道、连贯，是否有中式英语
-
-注意：
-- 你只能看到语音识别文本，无法听到发音；不要评价发音
-- 回答很短、跑题或几乎没有内容时各项都要给低分
-- strengths：用中文指出回答中实际做得好的地方（1-3 条，必须基于原文，没有就返回空数组）
-- improvements：逐条列出待改进问题，quote 必须原样引用学生回答中的片段，problem 用中文说明问题，suggestion 给出修改后的英文写法
-- suggestions：2-4 条中文改进建议
-- revisedAnswer：根据题目生成一段自然、完整、符合中国高中生水平的英文参考答案（120-180 词），尽量保留学生的观点
-- feedback：一两句中文总体评价
-
-只返回JSON：
-{
-  "relevanceScore": 0-20,
-  "logicScore": 0-20,
-  "grammarScore": 0-20,
-  "vocabularyScore": 0-20,
-  "naturalnessScore": 0-20,
-  "feedback": "总体评价",
-  "strengths": ["优点"],
-  "improvements": [{"quote": "原文片段", "problem": "问题说明", "suggestion": "修改后的写法"}],
-  "suggestions": ["建议"],
-  "revisedAnswer": "英文参考答案"
-}`;
-
-  const content = await callDeepSeek(
-    [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: `【题目】\n${question}\n\n【学生回答（语音识别文本）】\n${transcript}` },
-    ],
-    { temperature: 0.3, maxTokens: 2000 },
-  );
-
-  const r = parseAiJson(content, impromptuSchema);
-  return {
-    ...r,
-    totalScore: r.relevanceScore + r.logicScore + r.grammarScore + r.vocabularyScore + r.naturalnessScore,
+    totalScore: r.understandingScore + thinkingScore + r.fluencyScore + r.bonusScore,
+    understandingScore: r.understandingScore,
+    thinkingScore,
+    fluencyScore: r.fluencyScore,
+    bonusScore: r.bonusScore,
+    feedback: r.feedback,
+    suggestions: mergeSuggestions(r.languageSuggestions, r.contentSuggestions),
+    strengths: r.strengths,
+    grammarIssues: r.grammarIssues,
+    revisedAnswer: r.revisedAnswer,
   };
 }
