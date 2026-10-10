@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 25% 97%;
+    --foreground: 220 30% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 30% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 30% 12%;
+    --primary: 220 45% 20%;
+    --primary-foreground: 45 60% 95%;
+    --secondary: 220 20% 94%;
+    --secondary-foreground: 220 45% 20%;
+    --muted: 220 15% 94%;
+    --muted-foreground: 220 10% 45%;
+    --accent: 43 60% 50%;
+    --accent-foreground: 220 45% 20%;
+    --destructive: 0 65% 45%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 43 60% 50%;
+    --radius: 0.625rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+@layer components {
+  .riell-card {
+    @apply relative bg-white/80 backdrop-blur-sm border border-navy-200/50 rounded-xl shadow-sm;
+    @apply hover:shadow-md transition-all duration-300;
+  }
+
+  .riell-card-gradient {
+    @apply relative bg-gradient-to-br from-navy-500 to-navy-700 text-white rounded-xl shadow-lg;
+  }
+
+  .riell-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3;
+    @apply bg-navy-500 hover:bg-navy-600 text-white font-medium rounded-lg;
+    @apply transition-all duration-200 hover:shadow-glow;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .riell-btn-gold {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3;
+    @apply bg-gold-500 hover:bg-gold-600 text-navy-900 font-semibold rounded-lg;
+    @apply transition-all duration-200 hover:shadow-glow;
+  }
+
+  .riell-btn-outline {
+    @apply inline-flex items-center justify-center gap-2 px-6 py-3;
+    @apply border-2 border-navy-500 text-navy-500 hover:bg-navy-50 font-medium rounded-lg;
+    @apply transition-all duration-200;
+  }
+
+  .riell-badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+    @apply bg-gold-100 text-gold-700 border border-gold-200;
+  }
+
+  .riell-section-title {
+    @apply text-2xl font-bold text-navy-500 font-display;
+    @apply flex items-center gap-3;
+  }
+
+  .riell-divider {
+    @apply h-px bg-gradient-to-r from-transparent via-navy-200 to-transparent;
+  }
+
+  .recording-pulse {
+    @apply relative;
+  }
+
+  .recording-pulse::before {
+    content: "";
+    @apply absolute inset-0 rounded-full bg-crimson-500/30;
+    animation: pulse-ring 1.5s ease-out infinite;
+  }
+
+  .score-ring {
+    @apply relative inline-flex items-center justify-center;
+  }
+
+  .score-ring svg {
+    transform: rotate(-90deg);
+  }
+
+  .score-ring circle.progress {
+    transition: stroke-dashoffset 1s ease-in-out;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .bg-riell-gradient {
+    background: linear-gradient(135deg, #1a2a4a 0%, #2d4a6f 50%, #1a2a4a 100%);
+  }
+
+  .bg-riell-subtle {
+    background: linear-gradient(180deg, #f8f6f1 0%, #f0ece3 100%);
+  }
+}
