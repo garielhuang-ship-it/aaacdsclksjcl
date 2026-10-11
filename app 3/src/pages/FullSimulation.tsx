@@ -166,7 +166,7 @@ export default function FullSimulation() {
       }
       try {
         const result = await evaluateSpeakingMutation.mutateAsync({
-          question, transcript: fullTranscript,
+          question, transcript: fullTranscript, category,
           duration: 90 - speakingRecordTimer.timeLeft,
         });
         setSpeakingResult(result);
@@ -178,7 +178,7 @@ export default function FullSimulation() {
       }
       setStage("complete");
     }, 500);
-  }, [stopListening, getTranscript, question, evaluateSpeakingMutation, speakingRecordTimer]);
+  }, [stopListening, getTranscript, question, category, evaluateSpeakingMutation, speakingRecordTimer]);
 
   const handleRestart = () => {
     window.location.reload();
@@ -553,11 +553,11 @@ export default function FullSimulation() {
                 <div className="grid grid-cols-5 gap-3 mb-4">
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
                     <div className="text-xl font-bold text-navy-500">{speakingResult.understandingScore ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">理解能力 / 20</div>
+                    <div className="text-xs text-muted-foreground">{speakingResult.questionType === "daily" ? "理解切题" : "理解能力"} / 20</div>
                   </div>
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
                     <div className="text-xl font-bold text-navy-500">{speakingResult.thinkingScore ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">思辨能力 / 20</div>
+                    <div className="text-xs text-muted-foreground">{speakingResult.questionType === "daily" ? "语言运用" : "思辨能力"} / 20</div>
                   </div>
                   <div className="text-center p-3 bg-navy-50 rounded-lg">
                     <div className="text-xl font-bold text-navy-500">{speakingResult.fluencyScore ?? "—"}</div>

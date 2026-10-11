@@ -135,6 +135,29 @@ const questionSchema = z.object({
   tips: stringList,
 });
 
+// 出题比例：日常话题类 60%，辩证观点类 40%。每 10 题按 6:4 洗牌后依次抽取，连续出多题时比例稳定
+let typeDeck: boolean[] = [];
+function nextIsDaily() {
+  if (!typeDeck.length) {
+    typeDeck = Array.from({ length: 10 }, (_, i) => i < 6);
+    for (let i = typeDeck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [typeDeck[i], typeDeck[j]] = [typeDeck[j], typeDeck[i]];
+    }
+  }
+  return typeDeck.pop()!;
+}
+
+// 判断问答题型：优先用出题时的分类；题库题目等无分类时按题干是否给出对立观点判断
+export type QuestionType = "daily" | "debate";
+export function questionTypeOf(question: string, category?: string): QuestionType {
+  if (category === "日常话题类") return "daily";
+  if (category === "辩证观点类") return "debate";
+  return /some (people|students)|others (think|believe|say|argue)|agree|disagree|for or against|pros and cons/i.test(question)
+    ? "debate"
+    : "daily";
+}
+
 // 生成即兴问答题
 export async function generateSpeakingQuestion(
   category?: string,
@@ -144,10 +167,9 @@ export async function generateSpeakingQuestion(
   category: string;
   tips: string[];
 }> {
-  // 出题比例：日常话题类 60%，辩证观点类 40%（由代码抽取，保证比例稳定）
-  const isDaily = Math.random() < 0.6;
+  const isDaily = nextIsDaily();
   const typeRule = isDaily
-    ? "日常话题类：询问学生的梦想、习惯、喜欢做的事、个人经历或选择等，要求说明做什么＋为什么。"
+    ? "日常话题类：询问学生的梦想、习惯、喜欢做的事、个人经历或选择等，要求说明做什么＋为什么。示例：What do you usually do after school? Why? / What is your favourite way to relax at weekends? Why?"
     : "辩证观点类：在题目中给出两种对立观点，要求学生表明立场并论证。";
 
   const systemPrompt = `你是外研社杯全国中学生外语素养大赛的口语考官，请生成一道英文即兴问答题。
@@ -187,14 +209,21 @@ export async function generateSpeakingQuestion(
   };
 }
 
+// 总体校准：放在评分 system prompt 开头
+const CALIBRATION = "选手为高中生，按高中英语口语水平评分，不以母语者或范文标准打分。";
+
 // 评分规范（完整写入评分接口的 system prompt；朗读与问答各用各自评分表）
 const EXAM_SPEC = `【考试结构】线上，朗读：准备1分钟，限时2分钟，50分；问答：准备30秒，限时1.5分钟，50分＋升华加分≤5，总分≤100。朗读全程屏幕显示原文。
 
-【朗读评分50】语音语调20：音素准确、重音合理、语调自然；语速10：快慢适中；流畅度15：连贯、少停顿回读；完整度5：不漏词跳句。
+【朗读评分50】语音语调20：音素准确、重音合理、语调自然，个别单词发音不准但整体可听懂的不扣重分；语速10：快慢适中；流畅度15：连贯、少停顿回读；完整度5：不漏词跳句。
 
-【问答评分50】理解能力20：准确归纳要点并切题，语句完整、语法正确、条理清晰、语言得体；思辨能力20：逻辑严谨（观点→理由→例证），观点积极；语音语调10：语音语调正确、语速适宜、流畅。升华加分≤5：结尾有个人思考或价值提升且贴切自然，酌情1～5分；喊口号不加分。
+【语法底线（问答两类通用）】语法与用词以「不影响理解」为底线，少量时态、单复数、介词等错误不扣分或轻扣，只有影响理解的错误才明显扣分。
 
-【时间违规】超时自动截断不计；问答不足1分钟思辨分最高一半。
+【日常话题类问答评分50】理解切题20：准确回答问题、语句完整、条理清晰；语言运用20：词汇语法恰当、表达自然、细节具体；语音语调10：语音语调正确、语速适宜、流畅。此类考真实经历与表达，不以论证逻辑打分，没有论证或例证不扣分；无升华加分。
+
+【辩证观点类问答评分50】理解能力20：准确归纳要点并切题，条理清晰、语言得体；思辨能力20：观点→理由→例证，只看观点明确、有理由、有例子，理由和例子合理即给高分，不要求深度、独特见解或复杂论证，结巴、简单句不影响思辨分；语音语调10：语音语调正确、语速适宜、流畅。升华加分≤5：结尾有个人思考或价值提升且贴切自然，酌情1～5分；喊口号不加分。
+
+【时间违规】超时自动截断不计；辩证观点类问答不足1分钟思辨分最高一半。
 
 【出题规范】朗读题：说明文、记叙性说明文、议论文、演讲，130～180词，中国高中课标内，生词率≤2%，简单句并列句为主，2分钟内可读完。问答题：日常话题类（做什么＋为什么）或辩证观点类（对立观点表态论证），1.5分钟≈120～180词，禁是非题与政治宗教争议题。参考结构Point→Explain→Example→Extend，不作硬性要求。出题只输出题目本身。`;
 
@@ -229,7 +258,9 @@ export async function evaluateReading(
   wordDiff?: { missedWords: string[]; misreadWords: Array<{ expected: string; heard: string }> },
   duration?: number,
 ) {
-  const systemPrompt = `你是外研社杯全国中学生外语素养大赛的朗读评委。以下是完整评分规范：
+  const systemPrompt = `${CALIBRATION}
+
+你是外研社杯全国中学生外语素养大赛的朗读评委。以下是完整评分规范：
 
 ${EXAM_SPEC}
 
@@ -287,9 +318,10 @@ ${transcript}
 
 const speakingSchema = z.object({
   understandingScore: score(20),
-  thinkingScore: score(20),
+  thinkingScore: score(20).optional(),
+  languageScore: score(20).optional(),
   fluencyScore: score(10),
-  bonusScore: score(5),
+  bonusScore: score(5).optional(),
   feedback: z.string().min(1),
   languageSuggestions: stringList,
   contentSuggestions: stringList,
@@ -306,17 +338,26 @@ const speakingSchema = z.object({
   revisedAnswer: z.string().default(""),
 });
 
-// 评价口语问答表现（仅使用【问答评分50】＋升华加分）
-export async function evaluateSpeaking(question: string, transcript: string, duration?: number) {
+// 评价口语问答表现：日常话题类与辩证观点类各用各自评分表，不混用
+export async function evaluateSpeaking(question: string, transcript: string, duration?: number, category?: string) {
   const short = duration != null && duration < 60;
-  const systemPrompt = `你是外研社杯全国中学生外语素养大赛的口语考官。以下是完整评分规范：
+  const questionType = questionTypeOf(question, category);
+  const daily = questionType === "daily";
+  const systemPrompt = `${CALIBRATION}
+
+你是外研社杯全国中学生外语素养大赛的口语考官。以下是完整评分规范：
 
 ${EXAM_SPEC}
 
-本次评的是【问答】，只能使用【问答评分50】：理解能力(0-20)、思辨能力(0-20)、语音语调(0-10)，另加升华加分(0-5)。不得使用朗读评分表的任何分项。
+${
+    daily
+      ? `本次评的是【日常话题类问答】，只能使用【日常话题类问答评分50】：理解切题(0-20)、语言运用(0-20)、语音语调(0-10)。不得使用辩证观点类或朗读评分表的任何分项，不按论证逻辑打分，没有理由论证不扣分，不给升华加分。
+- 回答很短、跑题或几乎没有内容时要给低分`
+      : `本次评的是【辩证观点类问答】，只能使用【辩证观点类问答评分50】：理解能力(0-20)、思辨能力(0-20)、语音语调(0-10)，另加升华加分(0-5)。不得使用日常话题类或朗读评分表的任何分项。
 - 回答很短、跑题或几乎没有内容时要给低分
 - 升华加分只给结尾贴切自然的个人思考或价值提升，喊口号或没有则给 0
-- 回答不足 1 分钟时，思辨能力最高 10 分
+- 回答不足 1 分钟时，思辨能力最高 10 分`
+  }
 
 ${FEEDBACK_RULES}
 - grammarIssues：逐条列出回答中真实存在的语法、用词错误，issue 引用学生原句片段，correction 给出正确形式，explanation 用中文解释
@@ -324,10 +365,16 @@ ${FEEDBACK_RULES}
 
 只返回JSON，字段顺序即输出结构（总分由系统按分项相加）：
 {
-  "understandingScore": 理解能力(0-20),
+${
+    daily
+      ? `  "understandingScore": 理解切题(0-20),
+  "languageScore": 语言运用(0-20),
+  "fluencyScore": 语音语调(0-10),`
+      : `  "understandingScore": 理解能力(0-20),
   "thinkingScore": 思辨能力(0-20),
   "fluencyScore": 语音语调(0-10),
-  "bonusScore": 升华加分(0-5),
+  "bonusScore": 升华加分(0-5),`
+  }
   "feedback": "一两句总体评语",
   "languageSuggestions": ["语言层面建议"],
   "contentSuggestions": ["内容逻辑层面建议"],
@@ -353,14 +400,18 @@ ${transcript}
   );
 
   const r = parseAiJson(content, speakingSchema);
-  // 时间违规：不足 1 分钟思辨分最高一半
-  const thinkingScore = short ? Math.min(r.thinkingScore, 10) : r.thinkingScore;
+  const second = daily ? r.languageScore : r.thinkingScore;
+  if (second == null) throw new TRPCError({ code: "BAD_GATEWAY", message: "AI 返回格式有误，请重试。" });
+  // 第二个 20 分项：日常类为语言运用，辩证类为思辨能力（时间违规：不足 1 分钟思辨分最高一半）
+  const thinkingScore = !daily && short ? Math.min(second, 10) : second;
+  const bonusScore = daily ? 0 : (r.bonusScore ?? 0);
   return {
-    totalScore: r.understandingScore + thinkingScore + r.fluencyScore + r.bonusScore,
+    questionType,
+    totalScore: r.understandingScore + thinkingScore + r.fluencyScore + bonusScore,
     understandingScore: r.understandingScore,
     thinkingScore,
     fluencyScore: r.fluencyScore,
-    bonusScore: r.bonusScore,
+    bonusScore,
     feedback: r.feedback,
     suggestions: mergeSuggestions(r.languageSuggestions, r.contentSuggestions),
     strengths: r.strengths,
