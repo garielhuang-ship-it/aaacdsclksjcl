@@ -152,10 +152,11 @@ export const evaluationRouter = createRouter({
           "请用英文回答"
         ),
         duration: z.number().int().min(0).max(3600).optional(),
+        category: z.string().max(100).optional(),
       })
     )
     .mutation(async ({ input }) => {
-      const aiResult = await evaluateSpeaking(input.question, input.transcript, input.duration);
+      const aiResult = await evaluateSpeaking(input.question, input.transcript, input.duration, input.category);
 
       const sessionId = crypto.randomUUID();
       await saveRecord({
@@ -169,6 +170,7 @@ export const evaluationRouter = createRouter({
         fluencyScore: aiResult.fluencyScore,
         totalScore: aiResult.totalScore,
         aiFeedback: {
+          questionType: aiResult.questionType,
           bonusScore: aiResult.bonusScore,
           feedback: aiResult.feedback,
           suggestions: aiResult.suggestions,
@@ -191,10 +193,11 @@ export const evaluationRouter = createRouter({
         question: z.string().trim().min(1).max(MAX_QUESTION),
         transcript: nonEmptyTranscript.refine((t) => /[a-zA-Z]{2,}/.test(t), "请用英文回答"),
         duration: z.number().int().min(0).max(3600).optional(),
+        category: z.string().max(100).optional(),
       })
     )
     .mutation(async ({ input }) => {
-      const aiResult = await evaluateSpeaking(input.question, input.transcript, input.duration);
+      const aiResult = await evaluateSpeaking(input.question, input.transcript, input.duration, input.category);
 
       const sessionId = crypto.randomUUID();
       await saveRecord({

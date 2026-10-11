@@ -106,7 +106,7 @@ export default function SpeakingPractice() {
     }
 
     try {
-      const result = await evaluateMutation.mutateAsync({ question, transcript: answer, duration });
+      const result = await evaluateMutation.mutateAsync({ question, transcript: answer, duration, category });
       setEvaluationResult(result);
     } catch (err) {
       setEvaluationError(getErrorMessage(err));
@@ -401,10 +401,11 @@ export default function SpeakingPractice() {
                   <div className="text-sm text-blue-100/80 mt-1 mb-6">总分 / 50（升华加分另计，最高 +5）</div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                     {[
-                      ["理解能力", evaluationResult.understandingScore, 20],
-                      ["思辨能力", evaluationResult.thinkingScore, 20],
+                      ...(evaluationResult.questionType === "daily"
+                        ? [["理解切题", evaluationResult.understandingScore, 20], ["语言运用", evaluationResult.thinkingScore, 20]]
+                        : [["理解能力", evaluationResult.understandingScore, 20], ["思辨能力", evaluationResult.thinkingScore, 20]]),
                       ["语音语调", evaluationResult.fluencyScore, 10],
-                      ["升华加分", evaluationResult.bonusScore, 5],
+                      ...(evaluationResult.questionType === "daily" ? [] : [["升华加分", evaluationResult.bonusScore, 5]]),
                     ].map(([label, value, max]) => (
                       <div key={label} className="text-center">
                         <div className="text-3xl font-bold text-gold-400 font-mono">{value}</div>
