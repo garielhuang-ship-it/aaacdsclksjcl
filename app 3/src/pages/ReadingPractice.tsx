@@ -28,6 +28,7 @@ export default function ReadingPractice() {
   const [trainingFocus, setTrainingFocus] = useState("");
   const [evaluationResult, setEvaluationResult] = useState<any>(null);
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
   const {
     transcript,
@@ -38,6 +39,8 @@ export default function ReadingPractice() {
     stopListening,
     resetTranscript,
     getTranscript,
+    micError,
+    requestMicrophone,
   } = useSpeechRecognition();
 
   const prepTimer = useTimer(60);
@@ -69,7 +72,8 @@ export default function ReadingPractice() {
     }
   }, [recordTimer.isExpired, phase]);
 
-  const handleStartPreparing = () => {
+  const handleStartPreparing = async () => {
+    if (!(await requestMicrophone())) return;
     setPhase("preparing");
     prepTimer.reset(60);
     setTimeout(() => prepTimer.start(), 100);
@@ -78,6 +82,7 @@ export default function ReadingPractice() {
   const handleStartRecording = () => {
     prepTimer.pause();
     resetTranscript();
+    setAudioUrl(null);
     setPhase("recording");
     recordTimer.reset(120);
     startListening();
@@ -85,12 +90,13 @@ export default function ReadingPractice() {
   };
 
   const handleStopRecording = useCallback(() => {
-    stopListening();
+    const audioPromise = stopListening();
     recordTimer.pause();
     setPhase("evaluating");
 
     // 延迟确保 final transcript 已更新
     setTimeout(async () => {
+      setAudioUrl(await audioPromise);
       const fullTranscript = getTranscript();
       if (!fullTranscript) {
         setEvaluationError("未检测到语音识别结果，未进行评分。请检查浏览器麦克风权限，并在安静环境中靠近麦克风朗读。");
@@ -220,6 +226,13 @@ export default function ReadingPractice() {
               </ul>
             </div>
 
+            {micError && (
+              <div className="flex items-start gap-2 p-4 bg-crimson-50 rounded-lg text-sm text-crimson-700">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{micError}</span>
+              </div>
+            )}
+
             <div className="flex gap-4">
               <button onClick={handleStartPreparing} className="riell-btn-primary flex-1 text-lg py-4">
                 <Mic className="w-5 h-5" />
@@ -322,6 +335,12 @@ export default function ReadingPractice() {
                 <AlertCircle className="w-10 h-10 text-crimson-500 mx-auto mb-4" />
                 <h2 className="text-xl font-bold text-navy-500 mb-2">评价未完成</h2>
                 <p className="text-muted-foreground mb-6">{evaluationError}</p>
+                {audioUrl && (
+                  <div className="mb-6">
+                    <p className="text-sm text-muted-foreground mb-2">本次录音（仅保存在本机浏览器中，可回放）：</p>
+                    <audio controls src={audioUrl} className="w-full" />
+                  </div>
+                )}
                 <button onClick={handleRetry} className="riell-btn-outline">
                   <RotateCcw className="w-4 h-4" />
                   重新朗读
