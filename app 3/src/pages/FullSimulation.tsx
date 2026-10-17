@@ -29,6 +29,8 @@ export default function FullSimulation() {
   const [category, setCategory] = useState("");
   const [readingResult, setReadingResult] = useState<any>(null);
   const [speakingResult, setSpeakingResult] = useState<any>(null);
+  const [readingAudioUrl, setReadingAudioUrl] = useState<string | null>(null);
+  const [speakingAudioUrl, setSpeakingAudioUrl] = useState<string | null>(null);
 
   const {
     transcript,
@@ -39,7 +41,10 @@ export default function FullSimulation() {
     stopListening,
     resetTranscript,
     getTranscript,
-  } = useSpeechRecognition();
+    micError,
+    requestMicrophone,
+    releaseMicrophone,
+  } = useSpeechRecognition({ keepMicrophoneOpen: true });
 
   const readingPrepTimer = useTimer(60);
   const readingRecordTimer = useTimer(120);
@@ -62,6 +67,11 @@ export default function FullSimulation() {
       setStage("intro");
     }
   }, [passageData, questionData, passageLoading, questionLoading]);
+
+  // 两个环节共用同一路麦克风，模拟结束后释放（离开页面时由 hook 释放）
+  useEffect(() => {
+    if (stage === "complete") releaseMicrophone();
+  }, [stage, releaseMicrophone]);
 
   // Reading timers
   useEffect(() => {
@@ -89,7 +99,8 @@ export default function FullSimulation() {
     }
   }, [speakingRecordTimer.isExpired, stage]);
 
-  const startReadingPrep = () => {
+  const startReadingPrep = async () => {
+    if (!(await requestMicrophone())) return;
     setStage("reading-prep");
     readingPrepTimer.reset(60);
     setTimeout(() => readingPrepTimer.start(), 100);
@@ -105,11 +116,12 @@ export default function FullSimulation() {
   };
 
   const stopReadingRecording = useCallback(() => {
-    stopListening();
+    const audioPromise = stopListening();
     readingRecordTimer.pause();
     setStage("reading-eval");
 
     setTimeout(async () => {
+      setReadingAudioUrl(await audioPromise);
       const fullTranscript = getTranscript();
       if (!fullTranscript.trim()) {
         setReadingResult({
@@ -133,7 +145,9 @@ export default function FullSimulation() {
     }, 500);
   }, [stopListening, getTranscript, passageId, passage, evaluateReadingMutation, readingRecordTimer]);
 
-  const proceedToSpeaking = () => {
+  const proceedToSpeaking = async () => {
+    // 正常情况下沿用已打开的麦克风；若设备中途断开则重新申请
+    if (!(await requestMicrophone())) return;
     resetTranscript();
     setStage("speaking-prep");
     speakingPrepTimer.reset(30);
@@ -150,11 +164,12 @@ export default function FullSimulation() {
   };
 
   const stopSpeakingRecording = useCallback(() => {
-    stopListening();
+    const audioPromise = stopListening();
     speakingRecordTimer.pause();
     setStage("speaking-eval");
 
     setTimeout(async () => {
+      setSpeakingAudioUrl(await audioPromise);
       const fullTranscript = getTranscript();
       if (!fullTranscript.trim()) {
         setSpeakingResult({
@@ -310,6 +325,12 @@ export default function FullSimulation() {
               </div>
             </div>
 
+            {micError && (
+              <div className="flex items-start gap-2 p-4 bg-crimson-50 rounded-lg text-sm text-crimson-700">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{micError}</span>
+              </div>
+            )}
             <button onClick={startReadingPrep} className="riell-btn-primary w-full text-lg py-4">
               <Layers className="w-5 h-5" />
               开始模拟
@@ -407,7 +428,24 @@ export default function FullSimulation() {
                       </div>
                     ))}
                   </div>
+                  {readingResult.success === false && (
+                    <>
+                      <p className="text-sm text-crimson-600 mt-4">{readingResult.feedback}</p>
+                      {readingAudioUrl && (
+                        <div className="mt-4">
+                          <p className="text-sm text-muted-foreground mb-2">本次录音（仅保存在本机浏览器中，可回放）：</p>
+                          <audio controls src={readingAudioUrl} className="w-full" />
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
+                {micError && (
+                  <div className="flex items-start gap-2 p-4 bg-crimson-50 rounded-lg text-sm text-crimson-700">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{micError}</span>
+                  </div>
+                )}
                 <button onClick={proceedToSpeaking} className="riell-btn-primary w-full text-lg py-4">
                   进入问答环节
                   <ArrowRight className="w-5 h-5" />
@@ -531,6 +569,12 @@ export default function FullSimulation() {
                   ))}
                 </div>
                 <p className="text-sm text-navy-600 mb-3">{readingResult.feedback}</p>
+                {readingResult.success === false && readingAudioUrl && (
+                    <div className="mt-4 mb-3">
+                      <p className="text-sm text-muted-foreground mb-2">本次录音（仅保存在本机浏览器中，可回放）：</p>
+                      <audio controls src={readingAudioUrl} className="w-full" />
+                    </div>
+                )}
                 {readingResult.suggestions?.length > 0 && (
                   <div className="space-y-1">
                     {readingResult.suggestions.map((s: string, i: number) => (
@@ -573,6 +617,12 @@ export default function FullSimulation() {
                   </div>
                 </div>
                 <p className="text-sm text-navy-600 mb-3">{speakingResult.feedback}</p>
+                {speakingResult.success === false && speakingAudioUrl && (
+                    <div className="mt-4 mb-3">
+                      <p className="text-sm text-muted-foreground mb-2">本次录音（仅保存在本机浏览器中，可回放）：</p>
+                      <audio controls src={speakingAudioUrl} className="w-full" />
+                    </div>
+                )}
                 {speakingResult.grammarIssues?.length > 0 && (
                   <div className="mb-3">
                     <h4 className="text-sm font-medium text-navy-500 mb-2">语法纠正</h4>

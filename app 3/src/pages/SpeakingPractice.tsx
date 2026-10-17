@@ -32,6 +32,7 @@ export default function SpeakingPractice() {
   const [evaluationResult, setEvaluationResult] = useState<any>(null);
   const [evaluationError, setEvaluationError] = useState<string | null>(null);
   const [submittedTranscript, setSubmittedTranscript] = useState("");
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
   const {
     transcript,
@@ -42,6 +43,8 @@ export default function SpeakingPractice() {
     stopListening,
     resetTranscript,
     getTranscript,
+    micError,
+    requestMicrophone,
   } = useSpeechRecognition();
 
   const prepTimer = useTimer(30);
@@ -78,9 +81,11 @@ export default function SpeakingPractice() {
   }, [recordTimer.isExpired, phase]);
 
 
-  const handleStartRecording = () => {
+  const handleStartRecording = async () => {
+    if (!(await requestMicrophone())) return;
     prepTimer.pause();
     resetTranscript();
+    setAudioUrl(null);
     setPhase("recording");
     recordTimer.reset(MAX_RECORD_SECONDS);
     startListening();
@@ -114,11 +119,12 @@ export default function SpeakingPractice() {
   };
 
   const handleStopRecording = useCallback(() => {
-    stopListening();
+    const audioPromise = stopListening();
     recordTimer.pause();
     setPhase("evaluating");
 
-    setTimeout(() => {
+    setTimeout(async () => {
+      setAudioUrl(await audioPromise);
       const fullTranscript = getTranscript();
       setSubmittedTranscript(fullTranscript);
       submitEvaluation(fullTranscript, MAX_RECORD_SECONDS - recordTimer.timeLeft);
@@ -264,6 +270,13 @@ export default function SpeakingPractice() {
               </ul>
             </div>
 
+            {micError && (
+              <div className="flex items-start gap-2 p-4 bg-crimson-50 rounded-lg text-sm text-crimson-700">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{micError}</span>
+              </div>
+            )}
+
             <div className="flex gap-4">
               <button onClick={handleStartRecording} className="riell-btn-primary flex-1 text-lg py-4">
                 <Mic className="w-5 h-5" />
@@ -372,6 +385,12 @@ export default function SpeakingPractice() {
                 <AlertCircle className="w-10 h-10 text-crimson-500 mx-auto mb-4" />
                 <h2 className="text-xl font-bold text-navy-500 mb-2">评价未完成</h2>
                 <p className="text-muted-foreground mb-6">{evaluationError}</p>
+                {audioUrl && (
+                  <div className="mb-6">
+                    <p className="text-sm text-muted-foreground mb-2">本次录音（仅保存在本机浏览器中，可回放）：</p>
+                    <audio controls src={audioUrl} className="w-full" />
+                  </div>
+                )}
                 <div className="flex gap-4 justify-center">
                   <button onClick={handleRetry} className="riell-btn-outline">
                     <RotateCcw className="w-4 h-4" />
